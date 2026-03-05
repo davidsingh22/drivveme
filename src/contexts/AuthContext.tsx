@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useRef, useState } from 'r
 import { User, Session } from '@supabase/supabase-js';
 import OneSignal from 'react-onesignal';
 import { supabase } from '@/integrations/supabase/client';
+import { SITE_URL } from '@/lib/constants';
 import { useToast } from '@/hooks/use-toast';
 
 const isLikelyStandaloneIOS = () => {
@@ -464,7 +465,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
-        options: { emailRedirectTo: window.location.origin },
+        options: { emailRedirectTo: SITE_URL },
       });
       if (error) throw error;
       if (data.user) {
