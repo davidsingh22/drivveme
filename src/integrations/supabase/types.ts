@@ -938,7 +938,78 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      profiles_public: {
+        Row: {
+          avatar_url: string | null
+          created_at: string | null
+          first_name: string | null
+          id: string | null
+          language: Database["public"]["Enums"]["language_preference"] | null
+          last_name: string | null
+          updated_at: string | null
+          user_id: string | null
+        }
+        Insert: {
+          avatar_url?: string | null
+          created_at?: string | null
+          first_name?: string | null
+          id?: string | null
+          language?: Database["public"]["Enums"]["language_preference"] | null
+          last_name?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          avatar_url?: string | null
+          created_at?: string | null
+          first_name?: string | null
+          id?: string | null
+          language?: Database["public"]["Enums"]["language_preference"] | null
+          last_name?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
+      saved_cards_safe: {
+        Row: {
+          card_brand: string | null
+          card_exp_month: number | null
+          card_exp_year: number | null
+          card_last_four: string | null
+          created_at: string | null
+          id: string | null
+          is_default: boolean | null
+          nickname: string | null
+          updated_at: string | null
+          user_id: string | null
+        }
+        Insert: {
+          card_brand?: string | null
+          card_exp_month?: number | null
+          card_exp_year?: number | null
+          card_last_four?: string | null
+          created_at?: string | null
+          id?: string | null
+          is_default?: boolean | null
+          nickname?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          card_brand?: string | null
+          card_exp_month?: number | null
+          card_exp_year?: number | null
+          card_last_four?: string | null
+          created_at?: string | null
+          id?: string | null
+          is_default?: boolean | null
+          nickname?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       accept_ride: {
