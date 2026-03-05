@@ -1,1 +1,64 @@
 project_id = "bqpocvswrtqntlomdyzf"
+
+[functions.notify-drivers-new-ride]
+verify_jwt = false
+
+[functions.create-ride-and-notify-drivers]
+verify_jwt = false
+
+[functions.get-firebase-config]
+verify_jwt = false
+
+[functions.send-fcm-notification]
+verify_jwt = false
+
+[functions.send-push-notification]
+verify_jwt = false
+
+[functions.charge-tip]
+verify_jwt = false
+
+[functions.send-onesignal-notification]
+verify_jwt = false
+
+[functions.notify-driver]
+verify_jwt = false
+
+[functions.ride-status-push]
+verify_jwt = false
+
+[functions.bind-onesignal-player-id]
+verify_jwt = false
+
+[functions.notify-drivers-tiered]
+verify_jwt = false
+
+[functions.stripe-webhook]
+verify_jwt = false
+
+[functions.create-payment-intent]
+verify_jwt = false
+
+[functions.get-stripe-config]
+verify_jwt = false
+
+[functions.get-mapbox-token]
+verify_jwt = false
+
+[functions.manage-saved-cards]
+verify_jwt = false
+
+[functions.driver-payout]
+verify_jwt = false
+
+[functions.refund-payment]
+verify_jwt = false
+
+[functions.generate-vapid-keys]
+verify_jwt = false
+
+[functions.get-vapid-public-key]
+verify_jwt = false
+
+[functions.apple-pay-verification]
+verify_jwt = false
