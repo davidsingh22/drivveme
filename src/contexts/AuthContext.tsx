@@ -142,7 +142,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => { hasInitializedRef.current = hasInitialized; }, [hasInitialized]);
 
   const fetchProfile = async (userId: string) => {
-    const { data, error } = await supabase.from('profiles').select('*').eq('user_id', userId).maybeSingle();
+    const { data, error } = await supabase.from('profiles').select('id, first_name, last_name, avatar_url, phone_number, email, language, onesignal_player_id, stripe_customer_id, user_id, created_at, updated_at').eq('user_id', userId).maybeSingle();
     if (error && error.code !== 'PGRST116') {
       console.error('Error fetching profile:', error);
       throw error;
