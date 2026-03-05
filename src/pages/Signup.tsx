@@ -20,6 +20,7 @@ import RiderDisclosure from '@/components/signup/RiderDisclosure';
 import RiderMarketingPanel from '@/components/signup/RiderMarketingPanel';
 import DriverMarketingPanel from '@/components/signup/DriverMarketingPanel';
 import { useToast } from '@/hooks/use-toast';
+import { SITE_URL } from '@/lib/constants';
 
 type DriverSignupStep = 'info' | 'agreement' | 'review';
 
@@ -85,7 +86,7 @@ const Signup = () => {
     if (!validateRiderForm()) return;
     setIsSubmitting(true);
     try {
-      const { data: authData, error: authError } = await supabase.auth.signUp({ email, password, options: { emailRedirectTo: window.location.origin } });
+      const { data: authData, error: authError } = await supabase.auth.signUp({ email, password, options: { emailRedirectTo: SITE_URL } });
       if (authError) throw authError;
       if (!authData.user) throw new Error('Failed to create account');
       const userId = authData.user.id;
@@ -108,7 +109,7 @@ const Signup = () => {
     if (!validateDriverForm()) return;
     setIsSubmitting(true);
     try {
-      const { data: authData, error: authError } = await supabase.auth.signUp({ email, password, options: { emailRedirectTo: window.location.origin } });
+      const { data: authData, error: authError } = await supabase.auth.signUp({ email, password, options: { emailRedirectTo: SITE_URL } });
       if (authError) throw authError;
       if (!authData.user) throw new Error('Failed to create account');
       const userId = authData.user.id;
