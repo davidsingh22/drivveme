@@ -34,7 +34,7 @@ const Login = () => {
       justSignedIn.current = false;
       if (isAdmin) navigate("/admin", { replace: true });
       else if (isDriver) navigate("/driver", { replace: true });
-      else navigate("landing", { replace: true });
+      else navigate("/landing", { replace: true });
     };
     if (roles.length > 0) {
       routeByRole();
