@@ -68,6 +68,25 @@ function buildVehicleString(info: DriverInfo): string {
   return parts.join(" · ");
 }
 
+function toHex(bytes: Uint8Array): string {
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function deterministicNotificationId(userId: string, rideId: string, type: string): Promise<string> {
+  const raw = `${userId}:${rideId}:${type}`;
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(raw));
+  const bytes = new Uint8Array(digest).slice(0, 16);
+
+  // Force RFC4122 UUID layout bits
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+  const hex = toHex(bytes);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
 function getNotificationConfig(payload: RidePayload, driverInfo?: DriverInfo, etaMinutes?: number | null) {
   const { new_status, rider_id, driver_id } = payload;
   const name = driverInfo?.first_name || "Your driver";
@@ -95,9 +114,12 @@ function getNotificationConfig(payload: RidePayload, driverInfo?: DriverInfo, et
   }
 }
 
-async function insertInAppNotification(userId: string, rideId: string, title: string, message: string, type: string) {
+async function insertInAppNotification(userId: string, rideId: string, title: string, message: string, type: string): Promise<boolean> {
   const supabase = getSupabase();
+  const deterministicId = await deterministicNotificationId(userId, rideId, type);
+
   const { error } = await supabase.from("notifications").insert({
+    id: deterministicId,
     user_id: userId,
     ride_id: rideId,
     title,
@@ -105,16 +127,26 @@ async function insertInAppNotification(userId: string, rideId: string, title: st
     type,
     is_read: false,
   });
+
   if (error) {
+    if ((error as { code?: string }).code === "23505") {
+      console.log(`[ride-status-push] Duplicate notification suppressed for ${userId} (${type})`);
+      return false;
+    }
     console.error("[ride-status-push] Failed to insert in-app notification:", error);
-  } else {
-    console.log(`[ride-status-push] ✅ In-app notification inserted for ${userId}: ${type}`);
+    return false;
   }
+
+  console.log(`[ride-status-push] ✅ In-app notification inserted for ${userId}: ${type}`);
+  return true;
 }
 
 async function sendPush(targetUserId: string, title: string, message: string, data: Record<string, string>) {
   const restApiKey = Deno.env.get("ONESIGNAL_REST_API_KEY");
-  if (!restApiKey) throw new Error("ONESIGNAL_REST_API_KEY not configured");
+  if (!restApiKey) {
+    console.warn("[ride-status-push] ONESIGNAL_REST_API_KEY missing, skipping push send");
+    return { ok: false, status: 0, delivered: false, data: { skipped: true, reason: "ONESIGNAL_REST_API_KEY missing" } };
+  }
 
   console.log("[ride-status-push] 🔔 Sending push to:", targetUserId, "title:", title);
 
@@ -208,33 +240,41 @@ serve(async (req) => {
       return new Response(JSON.stringify({ skipped: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // Insert in-app notification
-    await insertInAppNotification(config.targetUserId, payload.ride_id, config.title, config.message, config.type);
+    // Insert in-app notifications (idempotent via deterministic UUID)
+    const insertedPrimary = await insertInAppNotification(config.targetUserId, payload.ride_id, config.title, config.message, config.type);
 
-    // For cancelled rides, also notify the rider
+    let insertedCancelledRider = false;
     if (payload.new_status === "cancelled" && payload.rider_id && payload.rider_id !== config.targetUserId) {
-      await insertInAppNotification(payload.rider_id, payload.ride_id, "Ride Cancelled ❌", "Your ride has been cancelled.", "ride_cancelled");
+      insertedCancelledRider = await insertInAppNotification(payload.rider_id, payload.ride_id, "Ride Cancelled ❌", "Your ride has been cancelled.", "ride_cancelled");
     }
 
-    // Send push notification
+    // Send push notifications only for newly-inserted notifications
     const pushData: Record<string, string> = { ride_id: payload.ride_id, status: payload.new_status };
     if (etaMinutes) pushData.eta_minutes = String(etaMinutes);
     if (driverInfo?.license_plate) pushData.license_plate = driverInfo.license_plate;
     if (driverInfo?.vehicle_color) pushData.vehicle_color = driverInfo.vehicle_color;
 
-    const result = await sendPush(config.targetUserId, config.title, config.message, pushData);
-
-    // For cancelled rides, also push to the rider
-    if (payload.new_status === "cancelled" && payload.rider_id) {
-      await sendPush(payload.rider_id, "Ride Cancelled ❌", "Your ride has been cancelled.", { ride_id: payload.ride_id, status: "cancelled" });
+    let result: unknown = { skipped: true, reason: "duplicate_notification" };
+    if (insertedPrimary) {
+      result = await sendPush(config.targetUserId, config.title, config.message, pushData);
     }
 
-    return new Response(JSON.stringify({ success: true, onesignal: result.data }), {
+    let cancelledRiderResult: unknown = null;
+    if (payload.new_status === "cancelled" && payload.rider_id && insertedCancelledRider) {
+      cancelledRiderResult = await sendPush(payload.rider_id, "Ride Cancelled ❌", "Your ride has been cancelled.", { ride_id: payload.ride_id, status: "cancelled" });
+    }
+
+    return new Response(JSON.stringify({
+      success: true,
+      inserted: { primary: insertedPrimary, cancelled_rider: insertedCancelledRider },
+      onesignal: result,
+      cancelled_rider_onesignal: cancelledRiderResult,
+    }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (err) {
     console.error("[ride-status-push] Error:", err);
-    return new Response(JSON.stringify({ error: err.message }), {
+    return new Response(JSON.stringify({ error: (err as Error).message }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
