@@ -103,7 +103,8 @@ function getNotificationConfig(payload: RidePayload, driverInfo?: DriverInfo, et
     case "completed":
       return { targetUserId: rider_id, title: "Ride Completed ✅", message: "You've arrived at your destination. Thanks for riding!", type: "ride_completed" };
     case "cancelled":
-      return { targetUserId: driver_id, title: "Ride Cancelled ❌", message: "The ride has been cancelled.", type: "ride_cancelled" };
+      // ALWAYS notify the rider on cancellation (rider is the one who needs to know)
+      return { targetUserId: rider_id, title: "Ride Cancelled ❌", message: "Your ride has been cancelled.", type: "ride_cancelled" };
     default:
       return null;
   }
@@ -205,31 +206,46 @@ serve(async (req) => {
     console.log("[ride-status-push] body:", rawBody);
     const payload: RidePayload = JSON.parse(rawBody);
 
+    // ── DB verification: always fetch the real rider_id & driver_id from rides table ──
+    const supabase = getSupabase();
+    const { data: rideRow, error: rideError } = await supabase
+      .from("rides")
+      .select("rider_id, driver_id, pickup_lat, pickup_lng")
+      .eq("id", payload.ride_id)
+      .single();
+
+    if (rideError || !rideRow) {
+      console.error("[ride-status-push] Could not fetch ride from DB:", rideError);
+      return new Response(JSON.stringify({ error: "ride_not_found" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // Override payload IDs with DB truth
+    payload.rider_id = rideRow.rider_id;
+    payload.driver_id = rideRow.driver_id;
+    console.log(`[ride-status-push] DB-verified rider_id=${payload.rider_id} driver_id=${payload.driver_id} status=${payload.new_status}`);
+
     let driverInfo: DriverInfo | undefined;
     let etaMinutes: number | null = null;
 
     if (payload.driver_id && ["driver_assigned", "driver_en_route", "arrived"].includes(payload.new_status)) {
-      const supabase = getSupabase();
-      const [info, rideRes] = await Promise.all([
-        getDriverInfo(payload.driver_id),
-        supabase.from("rides").select("pickup_lat, pickup_lng").eq("id", payload.ride_id).single(),
-      ]);
-      driverInfo = info;
-      if (rideRes.data && ["driver_assigned", "driver_en_route"].includes(payload.new_status)) {
-        etaMinutes = await getDriverEta(payload.driver_id, rideRes.data.pickup_lat, rideRes.data.pickup_lng);
+      driverInfo = await getDriverInfo(payload.driver_id);
+      if (rideRow.pickup_lat && rideRow.pickup_lng && ["driver_assigned", "driver_en_route"].includes(payload.new_status)) {
+        etaMinutes = await getDriverEta(payload.driver_id, rideRow.pickup_lat, rideRow.pickup_lng);
       }
     }
 
     const config = getNotificationConfig(payload, driverInfo, etaMinutes);
     if (!config || !config.targetUserId) {
+      console.log("[ride-status-push] No target user, skipping");
       return new Response(JSON.stringify({ skipped: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     const insertedPrimary = await insertInAppNotification(config.targetUserId, payload.ride_id, config.title, config.message, config.type);
 
-    let insertedCancelledRider = false;
-    if (payload.new_status === "cancelled" && payload.rider_id && payload.rider_id !== config.targetUserId) {
-      insertedCancelledRider = await insertInAppNotification(payload.rider_id, payload.ride_id, "Ride Cancelled ❌", "Your ride has been cancelled.", "ride_cancelled");
+    // For cancellation, also notify the driver if one was assigned
+    let insertedCancelledDriver = false;
+    if (payload.new_status === "cancelled" && payload.driver_id && payload.driver_id !== config.targetUserId) {
+      insertedCancelledDriver = await insertInAppNotification(payload.driver_id, payload.ride_id, "Ride Cancelled ❌", "The rider has cancelled the ride.", "ride_cancelled");
     }
 
     const pushData: Record<string, string> = { ride_id: payload.ride_id, status: payload.new_status };
@@ -242,16 +258,18 @@ serve(async (req) => {
       result = await sendPush(config.targetUserId, config.title, config.message, pushData);
     }
 
-    let cancelledRiderResult: unknown = null;
-    if (payload.new_status === "cancelled" && payload.rider_id && insertedCancelledRider) {
-      cancelledRiderResult = await sendPush(payload.rider_id, "Ride Cancelled ❌", "Your ride has been cancelled.", { ride_id: payload.ride_id, status: "cancelled" });
+    let cancelledDriverResult: unknown = null;
+    if (payload.new_status === "cancelled" && payload.driver_id && insertedCancelledDriver) {
+      cancelledDriverResult = await sendPush(payload.driver_id, "Ride Cancelled ❌", "The rider has cancelled the ride.", { ride_id: payload.ride_id, status: "cancelled" });
     }
 
     return new Response(JSON.stringify({
       success: true,
-      inserted: { primary: insertedPrimary, cancelled_rider: insertedCancelledRider },
+      verified_rider_id: payload.rider_id,
+      verified_driver_id: payload.driver_id,
+      inserted: { primary: insertedPrimary, cancelled_driver: insertedCancelledDriver },
       onesignal: result,
-      cancelled_rider_onesignal: cancelledRiderResult,
+      cancelled_driver_onesignal: cancelledDriverResult,
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
