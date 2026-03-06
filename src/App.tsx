@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from "react";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -68,8 +69,13 @@ const RideRoute = () => {
 
   if (authLoading || (session?.user?.id && !checked)) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="animate-pulse text-muted-foreground">Loading…</div>
+      <div className="min-h-screen bg-background p-6 space-y-4">
+        <Skeleton className="h-12 w-48" />
+        <Skeleton className="h-[60vh] w-full rounded-xl" />
+        <div className="flex gap-4">
+          <Skeleton className="h-10 flex-1" />
+          <Skeleton className="h-10 flex-1" />
+        </div>
       </div>
     );
   }
@@ -78,8 +84,13 @@ const RideRoute = () => {
 };
 
 const LazyFallback = () => (
-  <div className="min-h-screen bg-background flex items-center justify-center">
-    <div className="animate-pulse text-muted-foreground">Loading…</div>
+  <div className="min-h-screen bg-background p-6 space-y-4">
+    <Skeleton className="h-12 w-48" />
+    <Skeleton className="h-[60vh] w-full rounded-xl" />
+    <div className="flex gap-4">
+      <Skeleton className="h-10 flex-1" />
+      <Skeleton className="h-10 flex-1" />
+    </div>
   </div>
 );
 

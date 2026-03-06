@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import RideChat from '@/components/RideChat';
 import Navbar from '@/components/Navbar';
+import { Skeleton } from '@/components/ui/skeleton';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -41,7 +42,7 @@ export default function DriverMessages() {
     fetchActiveRide();
   }, [session?.user?.id, authLoading, rideIdParam, navigate]);
 
-  if (authLoading || isLoading) return <div className="min-h-screen bg-background"><Navbar /><div className="pt-20 px-4 flex items-center justify-center"><div className="animate-pulse text-muted-foreground">Loading...</div></div></div>;
+  if (authLoading || isLoading) return <div className="min-h-screen bg-background"><Navbar /><div className="pt-20 px-4 space-y-4"><Skeleton className="h-12 w-48" /><Skeleton className="h-[40vh] w-full rounded-xl" /></div></div>;
 
   if (!activeRide) return (
     <div className="min-h-screen bg-background"><Navbar />
