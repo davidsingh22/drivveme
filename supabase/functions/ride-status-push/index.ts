@@ -95,14 +95,7 @@ function getNotificationConfig(payload: RidePayload, driverInfo?: DriverInfo, et
   }
 }
 
-/** Insert an in-app notification into the notifications table */
-async function insertInAppNotification(
-  userId: string,
-  rideId: string,
-  title: string,
-  message: string,
-  type: string,
-) {
+async function insertInAppNotification(userId: string, rideId: string, title: string, message: string, type: string) {
   const supabase = getSupabase();
   const { error } = await supabase.from("notifications").insert({
     user_id: userId,
@@ -123,7 +116,7 @@ async function sendPush(targetUserId: string, title: string, message: string, da
   const restApiKey = Deno.env.get("ONESIGNAL_REST_API_KEY");
   if (!restApiKey) throw new Error("ONESIGNAL_REST_API_KEY not configured");
 
-  console.log("[ride-status-push] target:", targetUserId, "title:", title);
+  console.log("[ride-status-push] 🔔 Sending push to:", targetUserId, "title:", title);
 
   const supabase = getSupabase();
   const { data: profile } = await supabase.from("profiles").select("onesignal_player_id").eq("user_id", targetUserId).single();
@@ -138,6 +131,7 @@ async function sendPush(targetUserId: string, title: string, message: string, da
     content_available: true,
     mutable_content: true,
     ios_sound: "default",
+    android_sound: "default",
     thread_id: `ride_${data.ride_id}`,
     collapse_id: `ride_status_${data.ride_id}`,
     android_group: `ride_${data.ride_id}`,
@@ -146,25 +140,42 @@ async function sendPush(targetUserId: string, title: string, message: string, da
 
   const sendToOneSignal = async (targeting: Record<string, unknown>, label: string) => {
     const payload = { ...basePayload, ...targeting };
+    console.log(`[ride-status-push] Trying ${label}:`, JSON.stringify(targeting));
     const res = await fetch("https://onesignal.com/api/v1/notifications", {
       method: "POST",
       headers: { "Content-Type": "application/json; charset=utf-8", Authorization: `Basic ${restApiKey}` },
       body: JSON.stringify(payload),
     });
     const body = await res.json();
-    console.log(`[ride-status-push] ${label} response:`, res.status, JSON.stringify(body));
     const recipients = body?.recipients || 0;
+    console.log(`[ride-status-push] ${label} → status=${res.status} recipients=${recipients} id=${body?.id || "none"} errors=${JSON.stringify(body?.errors || [])}`);
     return { ok: res.ok, status: res.status, data: body, delivered: recipients > 0 };
   };
 
+  // Strategy 1: Direct player ID (most reliable if we have it)
   if (playerId) {
     const r1 = await sendToOneSignal({ include_player_ids: [playerId] }, "player_id");
     if (r1.delivered) return r1;
+    console.log("[ride-status-push] ⚠️ player_id delivery failed, trying fallbacks");
   }
-  const r2 = await sendToOneSignal({ filters: [{ field: "tag", key: "uid", relation: "=", value: targetUserId }] }, "tag_uid");
+
+  // Strategy 2: include_aliases with external_id (newer OneSignal API)
+  const r2 = await sendToOneSignal({
+    include_aliases: { external_id: [targetUserId] },
+    target_channel: "push",
+  }, "aliases_external_id");
   if (r2.delivered) return r2;
-  const r3 = await sendToOneSignal({ include_external_user_ids: [targetUserId] }, "external_id");
-  return r3;
+
+  // Strategy 3: Tag-based targeting
+  const r3 = await sendToOneSignal({
+    filters: [{ field: "tag", key: "uid", relation: "=", value: targetUserId }],
+  }, "tag_uid");
+  if (r3.delivered) return r3;
+
+  // Strategy 4: Legacy include_external_user_ids
+  const r4 = await sendToOneSignal({ include_external_user_ids: [targetUserId] }, "legacy_external_id");
+  console.log(`[ride-status-push] 🏁 All strategies exhausted. Last result: recipients=${r4.data?.recipients || 0}`);
+  return r4;
 }
 
 serve(async (req) => {
@@ -197,27 +208,15 @@ serve(async (req) => {
       return new Response(JSON.stringify({ skipped: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // ── Insert in-app notification for the rider (every status change) ──
-    await insertInAppNotification(
-      config.targetUserId,
-      payload.ride_id,
-      config.title,
-      config.message,
-      config.type,
-    );
+    // Insert in-app notification
+    await insertInAppNotification(config.targetUserId, payload.ride_id, config.title, config.message, config.type);
 
-    // For cancelled rides, also insert in-app notification for the rider
+    // For cancelled rides, also notify the rider
     if (payload.new_status === "cancelled" && payload.rider_id && payload.rider_id !== config.targetUserId) {
-      await insertInAppNotification(
-        payload.rider_id,
-        payload.ride_id,
-        "Ride Cancelled ❌",
-        "Your ride has been cancelled.",
-        "ride_cancelled",
-      );
+      await insertInAppNotification(payload.rider_id, payload.ride_id, "Ride Cancelled ❌", "Your ride has been cancelled.", "ride_cancelled");
     }
 
-    // ── Send OneSignal push notification ──
+    // Send push notification
     const pushData: Record<string, string> = { ride_id: payload.ride_id, status: payload.new_status };
     if (etaMinutes) pushData.eta_minutes = String(etaMinutes);
     if (driverInfo?.license_plate) pushData.license_plate = driverInfo.license_plate;
