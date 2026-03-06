@@ -24,7 +24,7 @@ const Navbar = () => {
 
   const handleSignOut = async () => {
     await signOut();
-    navigate('/login', { replace: true });
+    navigate('/landing', { replace: true });
   };
 
   const initials = profile

@@ -7,6 +7,7 @@ import { BrowserRouter, Routes, Route, useLocation, useNavigate } from "react-ro
 import { LanguageProvider } from "@/contexts/LanguageContext";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import AuthRedirect from "@/components/AuthRedirect";
+import ProtectedRoute from "@/components/ProtectedRoute";
 import Landing from "./pages/Landing";
 import { RouteErrorBoundary } from "@/components/RouteErrorBoundary";
 import { supabase } from "@/integrations/supabase/client";
@@ -111,26 +112,36 @@ const AppRoutes = () => (
     <RouteRestorer />
     <Suspense fallback={<LazyFallback />}>
       <Routes>
+        {/* Public / auth pages */}
         <Route path="/" element={<AuthRedirect><Landing /></AuthRedirect>} />
         <Route path="/landing" element={<AuthRedirect><Landing /></AuthRedirect>} />
         <Route path="/login" element={<AuthRedirect><Login /></AuthRedirect>} />
         <Route path="/signup" element={<AuthRedirect><Signup /></AuthRedirect>} />
-        <Route path="/rider-home" element={<RiderHome />} />
-        <Route path="/search" element={<RideSearch />} />
-        <Route path="/ride" element={<RideRoute />} />
-        <Route path="/ride-review" element={<RideReview />} />
+
+        {/* Rider-only routes */}
+        <Route path="/rider-home" element={<ProtectedRoute allowedRoles={['rider', 'admin']}><RiderHome /></ProtectedRoute>} />
+        <Route path="/search" element={<ProtectedRoute allowedRoles={['rider', 'admin']}><RideSearch /></ProtectedRoute>} />
+        <Route path="/ride" element={<ProtectedRoute allowedRoles={['rider', 'admin']}><RideRoute /></ProtectedRoute>} />
+        <Route path="/ride-review" element={<ProtectedRoute allowedRoles={['rider', 'admin']}><RideReview /></ProtectedRoute>} />
+        <Route path="/ride-history" element={<ProtectedRoute allowedRoles={['rider', 'driver', 'admin']}><RideHistory /></ProtectedRoute>} />
+
+        {/* Driver-only routes */}
         <Route
           path="/driver"
           element={
-            <RouteErrorBoundary title="Driver dashboard error">
-              <DriverDashboard />
-            </RouteErrorBoundary>
+            <ProtectedRoute allowedRoles={['driver', 'admin']}>
+              <RouteErrorBoundary title="Driver dashboard error">
+                <DriverDashboard />
+              </RouteErrorBoundary>
+            </ProtectedRoute>
           }
         />
-        <Route path="/driver-messages" element={<DriverMessages />} />
-        <Route path="/ride-history" element={<RideHistory />} />
-        <Route path="/earnings" element={<Earnings />} />
-        <Route path="/admin" element={<AdminPanel />} />
+        <Route path="/driver-messages" element={<ProtectedRoute allowedRoles={['driver', 'admin']}><DriverMessages /></ProtectedRoute>} />
+        <Route path="/earnings" element={<ProtectedRoute allowedRoles={['driver', 'admin']}><Earnings /></ProtectedRoute>} />
+
+        {/* Admin-only */}
+        <Route path="/admin" element={<ProtectedRoute allowedRoles={['admin']}><AdminPanel /></ProtectedRoute>} />
+
         <Route path="*" element={<NotFound />} />
       </Routes>
     </Suspense>
