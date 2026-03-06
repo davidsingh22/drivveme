@@ -43,6 +43,15 @@ interface DriverDetails {
   license_plate: string | null;
 }
 
+interface RideCompletionPayload {
+  id: string;
+  driver_id: string | null;
+  pickup_address: string;
+  dropoff_address: string;
+  estimated_fare: number | null;
+  actual_fare: number | null;
+}
+
 const STATUS_LABELS: Record<string, { en: string; fr: string; icon: string }> = {
   searching: { en: 'Looking for a driver…', fr: 'Recherche d\'un chauffeur…', icon: '🔍' },
   driver_assigned: { en: 'Driver assigned!', fr: 'Chauffeur assigné!', icon: '🚗' },
@@ -77,6 +86,25 @@ const RideBooking = () => {
   const [activeRide, setActiveRide] = useState<ActiveRide | null>(null);
   const [driverDetails, setDriverDetails] = useState<DriverDetails | null>(null);
 
+  const handleRideCompleted = useCallback((ride: RideCompletionPayload) => {
+    setActiveRide(null);
+    setDriverDetails(null);
+    setConfirmed(false);
+    setPostCancelState('none');
+
+    navigate('/ride-review', {
+      replace: true,
+      state: {
+        rideId: ride.id,
+        driverId: ride.driver_id,
+        driverName: null,
+        fare: Number(ride.actual_fare ?? ride.estimated_fare ?? 0),
+        pickupAddress: ride.pickup_address || '',
+        dropoffAddress: ride.dropoff_address || '',
+      },
+    });
+  }, [navigate]);
+
   // Restore from navigation state (from RideSearch)
   useEffect(() => {
     const state = routeLocation.state as any;
@@ -100,24 +128,46 @@ const RideBooking = () => {
     }
   }, [routeLocation.state, mapboxToken]);
 
-  // Check for existing active ride on mount
+  // Recover latest ride on mount and force review redirect for newly-completed rides
   useEffect(() => {
     if (!user) return;
+
+    let cancelled = false;
+
     (async () => {
-      const { data } = await supabase
+      const { data: latestRide } = await supabase
         .from('rides')
-        .select('id, status, driver_id, pickup_address, dropoff_address, estimated_fare')
+        .select('id, status, driver_id, pickup_address, dropoff_address, estimated_fare, actual_fare, updated_at')
         .eq('rider_id', user.id)
-        .in('status', ['searching', 'driver_assigned', 'driver_en_route', 'arrived', 'in_progress'])
-        .order('created_at', { ascending: false })
+        .in('status', ['searching', 'driver_assigned', 'driver_en_route', 'arrived', 'in_progress', 'completed'])
+        .order('updated_at', { ascending: false })
         .limit(1)
-        .single();
-      if (data) {
-        setActiveRide(data as ActiveRide);
-        if (data.driver_id) fetchDriverDetails(data.driver_id);
+        .maybeSingle();
+
+      if (cancelled || !latestRide) return;
+
+      if (latestRide.status === 'completed') {
+        const { data: existingRating } = await supabase
+          .from('ratings')
+          .select('id')
+          .eq('ride_id', latestRide.id)
+          .limit(1)
+          .maybeSingle();
+
+        if (!cancelled && !existingRating) {
+          handleRideCompleted(latestRide as RideCompletionPayload);
+        }
+        return;
       }
+
+      setActiveRide(latestRide as ActiveRide);
+      if (latestRide.driver_id) fetchDriverDetails(latestRide.driver_id);
     })();
-  }, [user]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user, handleRideCompleted]);
 
   // Real-time subscription for active ride status
   useEffect(() => {
@@ -134,9 +184,8 @@ const RideBooking = () => {
           filter: `id=eq.${activeRide.id}`,
         },
         (payload) => {
-          const updated = payload.new as any;
+          const updated = payload.new as RideCompletionPayload & { status: RideStatus };
           console.log('[RideBooking] Ride updated:', updated.status);
-          setActiveRide(prev => prev ? { ...prev, status: updated.status, driver_id: updated.driver_id } : null);
 
           // Show toast for status changes
           const label = STATUS_LABELS[updated.status];
@@ -144,32 +193,25 @@ const RideBooking = () => {
             sonnerToast(`${label.icon} ${language === 'fr' ? label.fr : label.en}`);
           }
 
-          // Fetch driver details when assigned
-          if (updated.driver_id && updated.status === 'driver_assigned') {
-            fetchDriverDetails(updated.driver_id);
+          if (updated.status === 'completed') {
+            handleRideCompleted(updated);
+            return;
           }
 
-          // Navigate to review page on completion — immediately, using payload data
-          if (updated.status === 'completed') {
-            navigate('/ride-review', {
-              replace: true,
-              state: {
-                rideId: updated.id,
-                driverId: updated.driver_id,
-                driverName: null, // will be fetched on review page
-                fare: updated.actual_fare || updated.estimated_fare || 0,
-                pickupAddress: updated.pickup_address || '',
-                dropoffAddress: updated.dropoff_address || '',
-              },
-            });
-            return; // stop processing
-          }
           if (updated.status === 'cancelled') {
             // Driver cancelled — show options immediately
             setActiveRide(null);
             setDriverDetails(null);
             setConfirmed(false);
             setPostCancelState('show_options');
+            return;
+          }
+
+          setActiveRide((prev) => (prev ? { ...prev, status: updated.status, driver_id: updated.driver_id } : null));
+
+          // Fetch driver details when assigned
+          if (updated.driver_id && updated.status === 'driver_assigned') {
+            fetchDriverDetails(updated.driver_id);
           }
         }
       )
@@ -178,9 +220,9 @@ const RideBooking = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [activeRide?.id, language]);
+  }, [activeRide?.id, language, handleRideCompleted]);
 
-  const fetchDriverDetails = async (driverId: string) => {
+  const fetchDriverDetails = useCallback(async (driverId: string) => {
     const [profileRes, driverRes] = await Promise.all([
       supabase.from('profiles').select('first_name, last_name, phone_number, avatar_url').eq('user_id', driverId).single(),
       supabase.from('driver_profiles').select('vehicle_make, vehicle_model, vehicle_color, license_plate').eq('user_id', driverId).single(),
@@ -195,7 +237,44 @@ const RideBooking = () => {
       vehicle_color: driverRes.data?.vehicle_color || null,
       license_plate: driverRes.data?.license_plate || null,
     });
-  };
+  }, []);
+
+  // Fallback reconciliation in case realtime update is missed
+  useEffect(() => {
+    if (!activeRide?.id || activeRide.status === 'completed' || activeRide.status === 'cancelled') return;
+
+    let cancelled = false;
+
+    const reconcileStatus = async () => {
+      const { data } = await supabase
+        .from('rides')
+        .select('id, status, driver_id, pickup_address, dropoff_address, estimated_fare, actual_fare')
+        .eq('id', activeRide.id)
+        .maybeSingle();
+
+      if (cancelled || !data) return;
+
+      if (data.status === 'completed') {
+        handleRideCompleted(data as RideCompletionPayload);
+        return;
+      }
+
+      if (data.status === 'cancelled') {
+        setActiveRide(null);
+        setDriverDetails(null);
+        setConfirmed(false);
+        setPostCancelState('show_options');
+      }
+    };
+
+    reconcileStatus();
+    const interval = window.setInterval(reconcileStatus, 3000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [activeRide?.id, activeRide?.status, handleRideCompleted]);
 
   const fetchRouteFromCoords = async (pLat: number, pLng: number, dLat: number, dLng: number) => {
     if (!mapboxToken) return;
