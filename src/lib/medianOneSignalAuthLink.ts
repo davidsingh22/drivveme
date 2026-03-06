@@ -2,38 +2,68 @@ import { supabase } from "@/integrations/supabase/client";
 
 let lastId: string | null = null;
 
+const MAX_RETRIES = 5;
+const RETRY_INTERVAL_MS = 2000;
+
+function attemptLogin(uid: string, attempt = 1): void {
+  console.log(`OneSignal Attempt: ${uid} (try ${attempt}/${MAX_RETRIES})`);
+  try {
+    const median = (window as any).median;
+    if (!median?.onesignal) {
+      if (attempt < MAX_RETRIES) {
+        setTimeout(() => attemptLogin(uid, attempt + 1), RETRY_INTERVAL_MS);
+      } else {
+        console.log("❌ Median OneSignal: gave up after max retries");
+      }
+      return;
+    }
+
+    // Register the device first
+    try { median.onesignal.register(); } catch { /* ignore */ }
+
+    try {
+      median.onesignal.login({ externalId: uid });
+      lastId = uid;
+      console.log("✅ Median Bridge: OneSignal login with ID", uid);
+    } catch {
+      // fallback for older bridge versions
+      window.location.href = `gonative://onesignal/login?externalId=${uid}`;
+      lastId = uid;
+    }
+  } catch (e) {
+    console.log("❌ Median OneSignal error:", e);
+    if (attempt < MAX_RETRIES) {
+      setTimeout(() => attemptLogin(uid, attempt + 1), RETRY_INTERVAL_MS);
+    }
+  }
+}
+
+/** Manually trigger OneSignal login – used by "Re-sync Notifications" button */
+export function resyncMedianOneSignal(uid: string): void {
+  lastId = null; // force re-login
+  attemptLogin(uid, 1);
+}
+
 export function initMedianOneSignalAuthLink() {
   let pendingUid: string | null | undefined = undefined;
 
   const applyLogin = (uid: string | null) => {
-    try {
-      if (typeof (window as any).median === "undefined") return;
-      const median = (window as any).median;
-      if (!median?.onesignal) return;
-
-      if (uid) {
-        if (lastId === uid) return;
+    if (uid) {
+      if (lastId === uid) return;
+      attemptLogin(uid);
+    } else {
+      if (lastId) {
         try {
-          median.onesignal.login({ externalId: uid });
-        } catch {
-          // fallback for older bridge versions
-          window.location.href = `gonative://onesignal/login?externalId=${uid}`;
-        }
-        lastId = uid;
-        console.log("✅ Median Bridge: OneSignal login with ID", uid);
-      } else {
-        if (lastId) {
-          try {
+          const median = (window as any).median;
+          if (median?.onesignal) {
             median.onesignal.logout();
-          } catch {
+          } else {
             window.location.href = "gonative://onesignal/logout";
           }
-        }
-        lastId = null;
-        console.log("✅ Median Bridge: OneSignal logout");
+        } catch { /* ignore */ }
       }
-    } catch (e) {
-      console.log("❌ Median OneSignal error:", e);
+      lastId = null;
+      console.log("✅ Median Bridge: OneSignal logout");
     }
   };
 
@@ -60,7 +90,7 @@ export function initMedianOneSignalAuthLink() {
   // React to auth state changes
   supabase.auth.onAuthStateChange((_event, session) => {
     const uid = session?.user?.id ?? null;
-    if (typeof (window as any).median !== "undefined" && (window as any).median?.onesignal) {
+    if (typeof (window as any).median !== "undefined") {
       applyLogin(uid);
     } else {
       pendingUid = uid;
