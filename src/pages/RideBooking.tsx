@@ -244,19 +244,45 @@ const RideBooking = () => {
 
   const handleCancelRide = async () => {
     if (!activeRide || !user) return;
+    const rideId = activeRide.id;
+    const driverId = activeRide.driver_id;
+
+    // Immediately clear UI
+    setActiveRide(null);
+    setConfirmed(false);
+    setStep('input');
+    setFare(null);
+    setDriverDetails(null);
+    toast({ title: language === 'fr' ? 'Course annulée' : 'Ride cancelled' });
+
     try {
+      // If a driver was assigned, insert cancellation notification for them BEFORE status update (RLS)
+      if (driverId) {
+        await supabase.from('notifications').insert({
+          user_id: driverId,
+          ride_id: rideId,
+          type: 'ride_cancelled',
+          title: 'Ride Cancelled ❌',
+          message: 'The rider cancelled this ride.',
+        });
+      }
+
+      // Update ride status
       await supabase.from('rides').update({
         status: 'cancelled',
         cancelled_at: new Date().toISOString(),
         cancelled_by: user.id,
-      }).eq('id', activeRide.id);
-      setActiveRide(null);
-      setConfirmed(false);
-      setStep('input');
-      setFare(null);
-      toast({ title: 'Ride cancelled' });
+        cancellation_reason: 'Rider cancelled',
+      }).eq('id', rideId);
+
+      // Fire instant push to driver (non-blocking)
+      if (driverId) {
+        supabase.functions.invoke('ride-status-push', {
+          body: { ride_id: rideId, new_status: 'cancelled', old_status: activeRide.status, rider_id: user.id, driver_id: driverId },
+        }).catch(() => {});
+      }
     } catch {
-      toast({ title: 'Error cancelling ride', variant: 'destructive' });
+      toast({ title: language === 'fr' ? 'Erreur' : 'Error cancelling ride', variant: 'destructive' });
     }
   };
 

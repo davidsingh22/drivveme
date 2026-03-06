@@ -118,6 +118,26 @@ const DriverDashboard = () => {
     })();
   }, [session?.user?.id]);
 
+  // Realtime: detect when current ride is cancelled by rider
+  useEffect(() => {
+    const rideId = currentRide?.id;
+    if (!rideId) return;
+    const channel = supabase
+      .channel(`driver-ride-status-${rideId}`)
+      .on('postgres_changes', {
+        event: 'UPDATE', schema: 'public', table: 'rides', filter: `id=eq.${rideId}`,
+      }, (payload) => {
+        const updated = payload.new as any;
+        if (updated.status === 'cancelled') {
+          console.log('[DriverDashboard] Ride cancelled by rider, clearing UI');
+          setCurrentRide(null);
+          toast({ title: '❌ Ride Cancelled', description: 'The rider cancelled this ride.' });
+        }
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [currentRide?.id]);
+
   // Today's earnings
   useEffect(() => {
     if (!user) return;
