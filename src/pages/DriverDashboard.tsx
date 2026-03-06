@@ -276,6 +276,10 @@ const DriverDashboard = () => {
         const mustEvict = updated.driver_id === null || updated.status === 'cancelled' || updated.status === 'completed' || updated.driver_id !== driverId;
 
         if (mustEvict) {
+          // Force unsubscribe immediately so stale events cannot keep reviving UI
+          void supabase.removeChannel(channel);
+          rideStatusChannelRef.current = null;
+
           // Immediate state wipe (Hard Exit)
           setCurrentRide(null);
           hardExitRide(`Realtime eviction: status=${updated.status}, driver=${updated.driver_id}`);
@@ -289,8 +293,24 @@ const DriverDashboard = () => {
       })
       .subscribe();
 
-    return () => { supabase.removeChannel(channel); };
+    rideStatusChannelRef.current = channel;
+    return () => {
+      if (rideStatusChannelRef.current === channel) {
+        rideStatusChannelRef.current = null;
+      }
+      void supabase.removeChannel(channel);
+    };
   }, [currentRide?.id, session?.user?.id, hardExitRide, toast]);
+
+  // Deferred hard reset to bypass render timing glitches on cancelled rides
+  useEffect(() => {
+    if (currentRide?.status !== 'cancelled') return;
+    const timer = window.setTimeout(() => {
+      setCurrentRide(null);
+      hardExitRide('Deferred cancelled-state reset');
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [currentRide?.status, hardExitRide]);
 
   // Today's earnings
   useEffect(() => {
