@@ -94,7 +94,7 @@ const Signup = () => {
       await supabase.from('user_roles').insert({ user_id: userId, role: 'rider' });
       await supabase.from('rider_agreements').insert({ rider_id: userId, agrees_to_terms: true, agrees_to_disclosure: true, user_agent: navigator.userAgent });
       toast({ title: 'Account Created!', description: 'Welcome to Drivveme.' });
-      navigate('/ride', { replace: true });
+      navigate('/landing', { replace: true });
     } catch (err: any) {
       console.error('Signup error:', err);
       setError(err.message);
