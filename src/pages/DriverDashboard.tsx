@@ -142,24 +142,28 @@ const DriverDashboard = () => {
 
       if (data) {
         // Double-check: re-fetch this specific ride to confirm status hasn't changed
-        const { data: freshRide } = await supabase.from('rides').select('status').eq('id', data.id).maybeSingle();
+        const { data: freshRide } = await supabase.from('rides').select('status, driver_id').eq('id', data.id).maybeSingle();
         if (cancelled) return;
         const activeStatuses = ['driver_assigned', 'driver_en_route', 'arrived', 'in_progress'];
-        if (freshRide && activeStatuses.includes(freshRide.status)) {
+        if (freshRide && activeStatuses.includes(freshRide.status) && freshRide.driver_id === driverId) {
           setCurrentRide(data);
         } else {
-          console.log('[DriverDash] Ride', data.id, 'status changed between queries to', freshRide?.status, '— not restoring');
+          console.log('[DriverDash] Ride', data.id, 'is stale (status:', freshRide?.status, 'driver:', freshRide?.driver_id, ') — not restoring');
           clearRideState('Ride status changed during restore — stale ride blocked');
         }
       } else {
-        // No active ride found — always clear UI to prevent ghosts
-        clearRideState('No active ride found on restore — ride was cancelled/completed while app was closed');
+        // No active ride found — ALWAYS clear UI to kill any ghost
+        setCurrentRide(null);
+        setEtaMinutes(null);
+        setEtaDistanceKm(null);
+        setNavMode(false);
+        setNavSteps([]);
       }
     };
 
     fetchActiveRide();
 
-    // Also re-check on app resume (visibility change)
+    // Re-check on app resume
     const onResume = () => {
       if (document.visibilityState === 'visible') {
         console.log('[DriverDash] App resumed, re-checking active ride');
@@ -175,47 +179,52 @@ const DriverDashboard = () => {
     };
   }, [session?.user?.id, clearRideState]);
 
-  // Periodic liveness check: every 8s verify the current ride is still active
+  // Periodic liveness check: every 4s verify the current ride is still active (was 8s)
   useEffect(() => {
     const rideId = currentRide?.id;
-    if (!rideId) return;
+    const driverId = session?.user?.id;
+    if (!rideId || !driverId) return;
 
-    const interval = setInterval(async () => {
-      const { data } = await supabase.from('rides').select('status').eq('id', rideId).maybeSingle();
-      if (!data || data.status === 'cancelled' || data.status === 'completed') {
-        clearRideState(`Liveness check: ride ${rideId} is now ${data?.status ?? 'missing'}`);
+    const checkRide = async () => {
+      const { data } = await supabase.from('rides').select('status, driver_id').eq('id', rideId).maybeSingle();
+      const dead = !data || data.status === 'cancelled' || data.status === 'completed' || data.driver_id !== driverId;
+      if (dead) {
+        clearRideState(`Liveness check: ride ${rideId} is now ${data?.status ?? 'missing'} (driver: ${data?.driver_id ?? 'null'})`);
         if (data?.status === 'cancelled') {
           toast({ title: '❌ Ride Cancelled', description: 'This ride has been cancelled.' });
         }
       }
-    }, 8000);
+    };
 
+    // Check immediately on mount (catches stale state from previous render)
+    checkRide();
+    const interval = setInterval(checkRide, 4000);
     return () => clearInterval(interval);
-  }, [currentRide?.id, clearRideState]);
+  }, [currentRide?.id, session?.user?.id, clearRideState, toast]);
 
   // Realtime: detect when current ride is cancelled/completed by rider
   useEffect(() => {
     const rideId = currentRide?.id;
-    if (!rideId) return;
+    const driverId = session?.user?.id;
+    if (!rideId || !driverId) return;
     const channel = supabase
       .channel(`driver-ride-status-${rideId}`)
       .on('postgres_changes', {
         event: 'UPDATE', schema: 'public', table: 'rides', filter: `id=eq.${rideId}`,
       }, (payload) => {
         const updated = payload.new as any;
-        if (updated.status === 'cancelled' || updated.status === 'completed') {
-          clearRideState(`Realtime: ride updated to ${updated.status}`);
+        if (updated.status === 'cancelled' || updated.status === 'completed' || updated.driver_id !== driverId) {
+          clearRideState(`Realtime: ride updated to ${updated.status} (driver: ${updated.driver_id})`);
           if (updated.status === 'cancelled') {
             toast({ title: '❌ Ride Cancelled', description: 'The rider cancelled this ride.' });
           }
         } else {
-          // Sync status from DB (e.g., rider sees a different state)
           setCurrentRide(prev => prev ? { ...prev, status: updated.status } : null);
         }
       })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [currentRide?.id, clearRideState]);
+  }, [currentRide?.id, session?.user?.id, clearRideState, toast]);
 
   // Today's earnings
   useEffect(() => {
