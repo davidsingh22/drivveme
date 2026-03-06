@@ -69,20 +69,15 @@ function buildVehicleString(info: DriverInfo): string {
 }
 
 function toHex(bytes: Uint8Array): string {
-  return Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 async function deterministicNotificationId(userId: string, rideId: string, type: string): Promise<string> {
   const raw = `${userId}:${rideId}:${type}`;
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(raw));
   const bytes = new Uint8Array(digest).slice(0, 16);
-
-  // Force RFC4122 UUID layout bits
   bytes[6] = (bytes[6] & 0x0f) | 0x40;
   bytes[8] = (bytes[8] & 0x3f) | 0x80;
-
   const hex = toHex(bytes);
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
@@ -117,17 +112,9 @@ function getNotificationConfig(payload: RidePayload, driverInfo?: DriverInfo, et
 async function insertInAppNotification(userId: string, rideId: string, title: string, message: string, type: string): Promise<boolean> {
   const supabase = getSupabase();
   const deterministicId = await deterministicNotificationId(userId, rideId, type);
-
   const { error } = await supabase.from("notifications").insert({
-    id: deterministicId,
-    user_id: userId,
-    ride_id: rideId,
-    title,
-    message,
-    type,
-    is_read: false,
+    id: deterministicId, user_id: userId, ride_id: rideId, title, message, type, is_read: false,
   });
-
   if (error) {
     if ((error as { code?: string }).code === "23505") {
       console.log(`[ride-status-push] Duplicate notification suppressed for ${userId} (${type})`);
@@ -136,7 +123,6 @@ async function insertInAppNotification(userId: string, rideId: string, title: st
     console.error("[ride-status-push] Failed to insert in-app notification:", error);
     return false;
   }
-
   console.log(`[ride-status-push] ✅ In-app notification inserted for ${userId}: ${type}`);
   return true;
 }
@@ -144,16 +130,11 @@ async function insertInAppNotification(userId: string, rideId: string, title: st
 async function sendPush(targetUserId: string, title: string, message: string, data: Record<string, string>) {
   const restApiKey = Deno.env.get("ONESIGNAL_REST_API_KEY");
   if (!restApiKey) {
-    console.warn("[ride-status-push] ONESIGNAL_REST_API_KEY missing, skipping push send");
-    return { ok: false, status: 0, delivered: false, data: { skipped: true, reason: "ONESIGNAL_REST_API_KEY missing" } };
+    console.warn("[ride-status-push] ONESIGNAL_REST_API_KEY missing, skipping push");
+    return { ok: false, delivered: false, data: { skipped: true } };
   }
 
   console.log("[ride-status-push] 🔔 Sending push to:", targetUserId, "title:", title);
-
-  const supabase = getSupabase();
-  const { data: profile } = await supabase.from("profiles").select("onesignal_player_id").eq("user_id", targetUserId).single();
-  const playerId = profile?.onesignal_player_id;
-  console.log("[ride-status-push] player_id from DB:", playerId || "none");
 
   const basePayload = {
     app_id: ONESIGNAL_APP_ID,
@@ -184,28 +165,32 @@ async function sendPush(targetUserId: string, title: string, message: string, da
     return { ok: res.ok, status: res.status, data: body, delivered: recipients > 0 };
   };
 
-  // Strategy 1: Direct player ID (most reliable if we have it)
-  if (playerId) {
-    const r1 = await sendToOneSignal({ include_player_ids: [playerId] }, "player_id");
-    if (r1.delivered) return r1;
-    console.log("[ride-status-push] ⚠️ player_id delivery failed, trying fallbacks");
-  }
+  // PRIMARY: include_external_user_ids — this is what the Median bridge sets via login({ externalId })
+  const r1 = await sendToOneSignal({ include_external_user_ids: [targetUserId] }, "external_user_id");
+  if (r1.delivered) return r1;
 
-  // Strategy 2: include_aliases with external_id (newer OneSignal API)
+  // Fallback 1: include_aliases (newer OneSignal API)
   const r2 = await sendToOneSignal({
     include_aliases: { external_id: [targetUserId] },
     target_channel: "push",
   }, "aliases_external_id");
   if (r2.delivered) return r2;
 
-  // Strategy 3: Tag-based targeting
-  const r3 = await sendToOneSignal({
+  // Fallback 2: Direct player_id from DB
+  const supabase = getSupabase();
+  const { data: profile } = await supabase.from("profiles").select("onesignal_player_id").eq("user_id", targetUserId).single();
+  const playerId = profile?.onesignal_player_id;
+  if (playerId) {
+    console.log("[ride-status-push] Trying player_id from DB:", playerId);
+    const r3 = await sendToOneSignal({ include_player_ids: [playerId] }, "player_id");
+    if (r3.delivered) return r3;
+  }
+
+  // Fallback 3: Tag-based
+  const r4 = await sendToOneSignal({
     filters: [{ field: "tag", key: "uid", relation: "=", value: targetUserId }],
   }, "tag_uid");
-  if (r3.delivered) return r3;
 
-  // Strategy 4: Legacy include_external_user_ids
-  const r4 = await sendToOneSignal({ include_external_user_ids: [targetUserId] }, "legacy_external_id");
   console.log(`[ride-status-push] 🏁 All strategies exhausted. Last result: recipients=${r4.data?.recipients || 0}`);
   return r4;
 }
@@ -240,7 +225,6 @@ serve(async (req) => {
       return new Response(JSON.stringify({ skipped: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // Insert in-app notifications (idempotent via deterministic UUID)
     const insertedPrimary = await insertInAppNotification(config.targetUserId, payload.ride_id, config.title, config.message, config.type);
 
     let insertedCancelledRider = false;
@@ -248,7 +232,6 @@ serve(async (req) => {
       insertedCancelledRider = await insertInAppNotification(payload.rider_id, payload.ride_id, "Ride Cancelled ❌", "Your ride has been cancelled.", "ride_cancelled");
     }
 
-    // Send push notifications only for newly-inserted notifications
     const pushData: Record<string, string> = { ride_id: payload.ride_id, status: payload.new_status };
     if (etaMinutes) pushData.eta_minutes = String(etaMinutes);
     if (driverInfo?.license_plate) pushData.license_plate = driverInfo.license_plate;
