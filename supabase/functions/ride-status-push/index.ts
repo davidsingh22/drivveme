@@ -76,22 +76,46 @@ function getNotificationConfig(payload: RidePayload, driverInfo?: DriverInfo, et
   switch (new_status) {
     case "driver_assigned": {
       const etaText = etaMinutes ? `Pick up in ${etaMinutes} min` : `${name} is on the way`;
-      return { targetUserId: rider_id, title: `🚗 ${etaText}`, message: vehicleStr || `${name} has accepted your ride!` };
+      return { targetUserId: rider_id, title: `🚗 ${etaText}`, message: vehicleStr || `${name} has accepted your ride!`, type: "ride_accepted" };
     }
     case "driver_en_route": {
       const etaText = etaMinutes ? `Pick up in ${etaMinutes} min` : `${name} is on the way`;
-      return { targetUserId: rider_id, title: `🚗 ${etaText}`, message: vehicleStr || `${name} is heading to you.` };
+      return { targetUserId: rider_id, title: `🚗 ${etaText}`, message: vehicleStr || `${name} is heading to you.`, type: "driver_en_route" };
     }
     case "arrived":
-      return { targetUserId: rider_id, title: `${name} Has Arrived 📍`, message: vehicleStr ? `Look for ${vehicleStr}` : `${name} is at the pickup. Head outside!` };
+      return { targetUserId: rider_id, title: `${name} Has Arrived 📍`, message: vehicleStr ? `Look for ${vehicleStr}` : `${name} is at the pickup. Head outside!`, type: "driver_arrived" };
     case "in_progress":
-      return { targetUserId: rider_id, title: "Ride Started 🛣️", message: "Your ride has started. Enjoy the trip!" };
+      return { targetUserId: rider_id, title: "Ride Started 🛣️", message: "Your ride has started. Enjoy the trip!", type: "ride_started" };
     case "completed":
-      return { targetUserId: rider_id, title: "Ride Completed ✅", message: "You've arrived at your destination. Thanks for riding!" };
+      return { targetUserId: rider_id, title: "Ride Completed ✅", message: "You've arrived at your destination. Thanks for riding!", type: "ride_completed" };
     case "cancelled":
-      return { targetUserId: driver_id, title: "Ride Cancelled ❌", message: "The ride has been cancelled." };
+      return { targetUserId: driver_id, title: "Ride Cancelled ❌", message: "The ride has been cancelled.", type: "ride_cancelled" };
     default:
       return null;
+  }
+}
+
+/** Insert an in-app notification into the notifications table */
+async function insertInAppNotification(
+  userId: string,
+  rideId: string,
+  title: string,
+  message: string,
+  type: string,
+) {
+  const supabase = getSupabase();
+  const { error } = await supabase.from("notifications").insert({
+    user_id: userId,
+    ride_id: rideId,
+    title,
+    message,
+    type,
+    is_read: false,
+  });
+  if (error) {
+    console.error("[ride-status-push] Failed to insert in-app notification:", error);
+  } else {
+    console.log(`[ride-status-push] ✅ In-app notification inserted for ${userId}: ${type}`);
   }
 }
 
@@ -173,6 +197,27 @@ serve(async (req) => {
       return new Response(JSON.stringify({ skipped: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    // ── Insert in-app notification for the rider (every status change) ──
+    await insertInAppNotification(
+      config.targetUserId,
+      payload.ride_id,
+      config.title,
+      config.message,
+      config.type,
+    );
+
+    // For cancelled rides, also insert in-app notification for the rider
+    if (payload.new_status === "cancelled" && payload.rider_id && payload.rider_id !== config.targetUserId) {
+      await insertInAppNotification(
+        payload.rider_id,
+        payload.ride_id,
+        "Ride Cancelled ❌",
+        "Your ride has been cancelled.",
+        "ride_cancelled",
+      );
+    }
+
+    // ── Send OneSignal push notification ──
     const pushData: Record<string, string> = { ride_id: payload.ride_id, status: payload.new_status };
     if (etaMinutes) pushData.eta_minutes = String(etaMinutes);
     if (driverInfo?.license_plate) pushData.license_plate = driverInfo.license_plate;
@@ -180,6 +225,7 @@ serve(async (req) => {
 
     const result = await sendPush(config.targetUserId, config.title, config.message, pushData);
 
+    // For cancelled rides, also push to the rider
     if (payload.new_status === "cancelled" && payload.rider_id) {
       await sendPush(payload.rider_id, "Ride Cancelled ❌", "Your ride has been cancelled.", { ride_id: payload.ride_id, status: "cancelled" });
     }
