@@ -410,22 +410,57 @@ const DriverDashboard = () => {
   const cancelRide = async () => {
     if (!currentRide || !user || busyAction) return;
     setBusyAction('cancel');
-    const prev = currentRide;
+
+    const prev = { ...currentRide };
     const riderIdForNotif = prev.rider_id;
     const rideIdForNotif = prev.id;
-    clearRideState('Driver cancelled ride');
-    toast({ title: 'Ride cancelled' });
-    fireInstantPush(rideIdForNotif, 'cancelled', prev.status, riderIdForNotif, user.id);
-    if (riderIdForNotif) {
-      await supabase.from('notifications').insert({
-        user_id: riderIdForNotif, ride_id: rideIdForNotif, type: 'ride_cancelled',
-        title: 'Ride Cancelled ❌', message: 'The driver cancelled this ride.',
-      });
-    }
+
+    // Optimistic hard-exit; restored if persistence fails
+    clearRideState('Driver cancelled ride (optimistic)');
+
     try {
-      await withTimeout(supabase.from('rides').update({ status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: user.id, driver_id: null }).eq('id', rideIdForNotif).then(r => r), 7000, 'Cancel ride');
-    } catch { setCurrentRide(prev); }
-    finally { setBusyAction(null); }
+      const { data: cancelledRide, error: cancelError } = await withTimeout(
+        supabase
+          .from('rides')
+          .update({
+            status: 'cancelled',
+            cancelled_at: new Date().toISOString(),
+            cancelled_by: user.id,
+            cancellation_reason: 'Driver cancelled',
+          })
+          .eq('id', rideIdForNotif)
+          .eq('driver_id', user.id)
+          .in('status', ['driver_assigned', 'driver_en_route', 'arrived', 'in_progress'])
+          .select('id')
+          .maybeSingle()
+          .then(r => r),
+        7000,
+        'Cancel ride',
+      );
+
+      if (cancelError || !cancelledRide?.id) {
+        throw cancelError ?? new Error('Ride cancellation was not saved');
+      }
+
+      toast({ title: 'Ride cancelled' });
+      fireInstantPush(rideIdForNotif, 'cancelled', prev.status, riderIdForNotif, user.id);
+
+      if (riderIdForNotif) {
+        void supabase.from('notifications').insert({
+          user_id: riderIdForNotif,
+          ride_id: rideIdForNotif,
+          type: 'ride_cancelled',
+          title: 'Ride Cancelled ❌',
+          message: 'The driver cancelled this ride.',
+        });
+      }
+    } catch (e: any) {
+      console.error('[DriverDash] Cancel ride failed:', e);
+      setCurrentRide(prev);
+      toast({ title: 'Error', description: e?.message || 'Error cancelling ride', variant: 'destructive' });
+    } finally {
+      setBusyAction(null);
+    }
   };
 
   const alertRide = cachedAlertRide ? {
