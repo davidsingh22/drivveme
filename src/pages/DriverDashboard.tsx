@@ -135,7 +135,7 @@ const DriverDashboard = () => {
 
     const fetchActiveRide = async () => {
       const { data } = await supabase.from('rides').select('*').eq('driver_id', driverId)
-        .in('status', ACTIVE_STATUSES as unknown as string[])
+        .in('status', ['driver_assigned', 'driver_en_route', 'arrived', 'in_progress'] as const)
         .order('created_at', { ascending: false }).limit(1).maybeSingle();
       
       if (data) {
