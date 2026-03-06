@@ -35,6 +35,20 @@ const RideReview = () => {
   const [customTip, setCustomTip] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [driverDisplayName, setDriverDisplayName] = useState(state?.driverName || 'your driver');
+
+  // Fetch driver name if not provided
+  useEffect(() => {
+    if (!state?.driverId || state?.driverName) return;
+    (async () => {
+      const { data } = await supabase
+        .from('profiles')
+        .select('first_name')
+        .eq('user_id', state.driverId)
+        .single();
+      if (data?.first_name) setDriverDisplayName(data.first_name);
+    })();
+  }, [state?.driverId, state?.driverName]);
 
   useEffect(() => {
     if (!state?.rideId) {
@@ -149,7 +163,7 @@ const RideReview = () => {
           {/* Rating */}
           <div className="space-y-3">
             <h2 className="text-lg font-semibold text-foreground text-center">
-              {language === 'fr' ? `Comment était ${state.driverName}?` : `How was ${state.driverName}?`}
+              {language === 'fr' ? `Comment était ${driverDisplayName}?` : `How was ${driverDisplayName}?`}
             </h2>
             <div className="flex justify-center gap-2">
               {[1, 2, 3, 4, 5].map((star) => (
