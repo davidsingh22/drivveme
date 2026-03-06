@@ -130,12 +130,13 @@ async function insertInAppNotification(userId: string, rideId: string, title: st
 
 async function sendPush(targetUserId: string, title: string, message: string, data: Record<string, string>) {
   const restApiKey = Deno.env.get("ONESIGNAL_REST_API_KEY");
+  console.log("[ride-status-push] 🔑 ONESIGNAL_REST_API_KEY present:", !!restApiKey, "| first5:", restApiKey ? restApiKey.substring(0, 5) : "MISSING", "| length:", restApiKey?.length || 0);
   if (!restApiKey) {
     console.warn("[ride-status-push] ONESIGNAL_REST_API_KEY missing, skipping push");
     return { ok: false, delivered: false, data: { skipped: true } };
   }
 
-  console.log("[ride-status-push] 🔔 Sending push to user:", targetUserId, "| title:", title, "| REST key prefix:", restApiKey.substring(0, 8) + "...");
+  console.log("[ride-status-push] 🔔 Sending push to user:", targetUserId, "| title:", title);
 
   const basePayload = {
     app_id: ONESIGNAL_APP_ID,
