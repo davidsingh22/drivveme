@@ -393,18 +393,48 @@ const DriverDashboard = () => {
     setEtaMinutes(null);
     setEtaDistanceKm(null);
 
-    if (status === 'completed') { clearRideState('Driver completed ride'); toast({ title: 'Ride completed!' }); }
-    else { setCurrentRide(r => r ? { ...r, status } : null); toast({ title: status === 'arrived' ? 'Arrived!' : 'Ride started!' }); }
+    // For non-completion statuses, update optimistically
+    if (status !== 'completed') {
+      setCurrentRide(r => r ? { ...r, status } : null);
+      toast({ title: status === 'arrived' ? 'Arrived!' : 'Ride started!' });
+    }
+
     fireInstantPush(prev.id, status, prev.status, prev.rider_id, user.id);
+
     try {
-      const updates: any = { status };
-      if (status === 'in_progress') updates.pickup_at = new Date().toISOString();
-      else if (status === 'completed') { updates.dropoff_at = new Date().toISOString(); updates.actual_fare = prev.estimated_fare; updates.platform_fee = calculatePlatformFee(prev.estimated_fare); updates.driver_earnings = prev.estimated_fare - calculatePlatformFee(prev.estimated_fare); }
-      const { error } = await withTimeout(supabase.from('rides').update(updates).eq('id', prev.id).then(r => r), 7000, `Update to ${status}`);
-      if (error) { setCurrentRide(prev); toast({ title: 'Error', description: error.message, variant: 'destructive' }); }
-      if (status === 'completed') void refreshDriverProfile();
-    } catch { setCurrentRide(prev); toast({ title: 'Error', variant: 'destructive' }); }
-    finally { setBusyAction(null); }
+      const updates: Record<string, unknown> = { status };
+      if (status === 'in_progress') {
+        updates.pickup_at = new Date().toISOString();
+      } else if (status === 'completed') {
+        updates.dropoff_at = new Date().toISOString();
+        updates.actual_fare = prev.estimated_fare;
+        updates.platform_fee = calculatePlatformFee(prev.estimated_fare);
+        updates.driver_earnings = prev.estimated_fare - calculatePlatformFee(prev.estimated_fare);
+      }
+
+      const { error } = await withTimeout(
+        supabase.from('rides').update(updates).eq('id', prev.id).eq('driver_id', user.id).then(r => r),
+        7000,
+        `Update to ${status}`,
+      );
+
+      if (error) {
+        console.error('[DriverDash] updateRideStatus error:', error);
+        if (status !== 'completed') setCurrentRide(prev);
+        toast({ title: 'Error', description: error.message, variant: 'destructive' });
+      } else if (status === 'completed') {
+        // DB update succeeded — NOW clear the ride from UI
+        clearRideState('Driver completed ride — DB confirmed');
+        toast({ title: '✅ Ride completed!' });
+        void refreshDriverProfile();
+      }
+    } catch (err) {
+      console.error('[DriverDash] updateRideStatus exception:', err);
+      if (status !== 'completed') setCurrentRide(prev);
+      toast({ title: 'Error completing ride', description: 'Please try again.', variant: 'destructive' });
+    } finally {
+      setBusyAction(null);
+    }
   };
 
   const cancelRide = async () => {
