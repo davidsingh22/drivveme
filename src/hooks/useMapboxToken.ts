@@ -1,12 +1,27 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 
+let cachedToken: string | null = null;
+let cacheTimestamp = 0;
+const CACHE_TTL = 30 * 60 * 1000; // 30 min
+
+export function clearMapboxTokenCache() {
+  cachedToken = null;
+  cacheTimestamp = 0;
+}
+
 export function useMapboxToken() {
-  const [token, setToken] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [token, setToken] = useState<string | null>(cachedToken);
+  const [loading, setLoading] = useState(!cachedToken);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (cachedToken && Date.now() - cacheTimestamp < CACHE_TTL) {
+      setToken(cachedToken);
+      setLoading(false);
+      return;
+    }
+
     let cancelled = false;
     (async () => {
       try {
@@ -24,8 +39,13 @@ export function useMapboxToken() {
         );
         const json = await res.json();
         if (!cancelled) {
-          if (json.token) setToken(json.token);
-          else setError(json.error || 'Failed to fetch token');
+          if (json.token) {
+            cachedToken = json.token;
+            cacheTimestamp = Date.now();
+            setToken(json.token);
+          } else {
+            setError(json.error || 'Failed to fetch token');
+          }
         }
       } catch (e) {
         if (!cancelled) setError(String(e));
