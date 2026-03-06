@@ -7,7 +7,7 @@ type UserRole = 'rider' | 'driver' | 'admin';
 export function getRouteForRoles(roles: UserRole[]): string {
   if (roles.includes('admin')) return '/admin';
   if (roles.includes('driver')) return '/driver';
-  if (roles.includes('rider')) return '/ride';
+  if (roles.includes('rider')) return '/rider-home';
   return '/landing';
 }
 

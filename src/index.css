@@ -215,3 +215,32 @@
   0% { background-position: -200% center; }
   100% { background-position: 200% center; }
 }
+
+/* Greeting text glow */
+@keyframes greetingGlow {
+  0%, 100% { text-shadow: 0 0 10px rgba(255,255,255,0.5), 0 0 20px hsl(271,91%,65%); }
+  50% { text-shadow: 0 0 20px rgba(255,255,255,0.8), 0 0 40px hsl(271,91%,75%), 0 0 60px hsl(82,85%,55%); }
+}
+
+@keyframes subtitleShimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+.greeting-glow { animation: greetingGlow 3s ease-in-out infinite; }
+
+.subtitle-shimmer {
+  background: linear-gradient(90deg, rgba(255,255,255,0.7) 0%, rgba(255,255,255,1) 25%, hsl(82,85%,70%) 50%, rgba(255,255,255,1) 75%, rgba(255,255,255,0.7) 100%);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: subtitleShimmer 4s linear infinite;
+}
+
+@keyframes logoIconPulse {
+  0%, 100% { box-shadow: 0 0 8px hsl(271,91%,65%); transform: scale(1); }
+  50% { box-shadow: 0 0 20px hsl(271,91%,75%), 0 0 40px hsl(82,85%,55%); transform: scale(1.05); }
+}
+
+.logo-icon-pulse { animation: logoIconPulse 2s ease-in-out infinite; }

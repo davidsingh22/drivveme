@@ -1,213 +1,191 @@
-import { useState, useCallback } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import { useToast } from '@/hooks/use-toast';
-import { useMapboxToken } from '@/hooks/useMapboxToken';
-import { supabase } from '@/integrations/supabase/client';
-import { calculateFare, FareEstimate } from '@/lib/pricing';
-import { Button } from '@/components/ui/button';
-import { LogOut, Loader2 } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { Car } from 'lucide-react';
+import { useEffect, useRef, useCallback } from 'react';
+import { getValidAccessToken } from '@/lib/sessionRecovery';
+import riderHomeBg from '@/assets/rider-home-bg.png';
 import Logo from '@/components/Logo';
-import MapView from '@/components/ride/MapView';
-import AddressSearch from '@/components/ride/AddressSearch';
-import FareCard from '@/components/ride/FareCard';
-
-interface Location {
-  address: string;
-  lat: number;
-  lng: number;
-}
+import { clearMapboxTokenCache } from '@/hooks/useMapboxToken';
+import { useAuth } from '@/contexts/AuthContext';
 
 const RiderHome = () => {
-  const { profile, signOut, user } = useAuth();
   const navigate = useNavigate();
-  const { toast } = useToast();
-  const { token: mapboxToken, loading: tokenLoading } = useMapboxToken();
+  const { signOut } = useAuth();
+  const gpsStarted = useRef(false);
 
-  const [pickup, setPickup] = useState<Location | null>(null);
-  const [dropoff, setDropoff] = useState<Location | null>(null);
-  const [routeGeoJson, setRouteGeoJson] = useState<GeoJSON.Feature | null>(null);
-  const [fare, setFare] = useState<FareEstimate | null>(null);
-  const [distanceKm, setDistanceKm] = useState(0);
-  const [durationMin, setDurationMin] = useState(0);
-  const [requesting, setRequesting] = useState(false);
+  // Phase 1: Background GPS warming — 3-second strict timeout, never blocks UI
+  useEffect(() => {
+    if (gpsStarted.current || !navigator.geolocation) return;
+    gpsStarted.current = true;
 
-  // Fetch route when both points are set
-  const fetchRoute = useCallback(async (p: Location, d: Location) => {
-    if (!mapboxToken) return;
     try {
-      const res = await fetch(
-        `https://api.mapbox.com/directions/v5/mapbox/driving/${p.lng},${p.lat};${d.lng},${d.lat}?geometries=geojson&overview=full&access_token=${mapboxToken}`
+      const timeoutId = setTimeout(() => {
+        console.log('[RiderHome] GPS warm timed out after 3s');
+      }, 3000);
+
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          clearTimeout(timeoutId);
+          const data = {
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+            ts: Date.now(),
+          };
+          localStorage.setItem('drivveme_gps_warm', JSON.stringify(data));
+        },
+        () => {
+          clearTimeout(timeoutId);
+        },
+        { enableHighAccuracy: true, timeout: 3000, maximumAge: 60000 }
       );
-      const data = await res.json();
-      if (data.routes?.[0]) {
-        const route = data.routes[0];
-        const km = route.distance / 1000;
-        const min = route.duration / 60;
-        setDistanceKm(km);
-        setDurationMin(min);
-        setFare(calculateFare(km, min));
-        setRouteGeoJson({
-          type: 'Feature',
-          properties: {},
-          geometry: route.geometry,
-        });
-      }
     } catch {
-      toast({ title: 'Error', description: 'Failed to calculate route', variant: 'destructive' });
+      /* GPS completely unavailable */
     }
-  }, [mapboxToken, toast]);
+  }, []);
 
-  const handlePickup = (address: string, lat: number, lng: number) => {
-    const loc = { address, lat, lng };
-    setPickup(loc);
-    if (dropoff) fetchRoute(loc, dropoff);
-  };
+  // 'Slap-Awake' Refresh: re-warm GPS + reset Mapbox cache on every app resume
+  const lastHidden = useRef(Date.now());
 
-  const handleDropoff = (address: string, lat: number, lng: number) => {
-    const loc = { address, lat, lng };
-    setDropoff(loc);
-    if (pickup) fetchRoute(pickup, loc);
-  };
-
-  const clearRoute = () => {
-    setRouteGeoJson(null);
-    setFare(null);
-    setDistanceKm(0);
-    setDurationMin(0);
-  };
-
-  const handleRequestRide = async () => {
-    if (!pickup || !dropoff || !fare || !user) return;
-    setRequesting(true);
-    try {
-      const { error } = await supabase.from('rides').insert({
-        rider_id: user.id,
-        pickup_address: pickup.address,
-        pickup_lat: pickup.lat,
-        pickup_lng: pickup.lng,
-        dropoff_address: dropoff.address,
-        dropoff_lat: dropoff.lat,
-        dropoff_lng: dropoff.lng,
-        estimated_fare: fare.total,
-        distance_km: distanceKm,
-        estimated_duration_minutes: Math.round(durationMin),
-        subtotal_before_tax: fare.subtotalBeforeTax,
-        gst_amount: fare.gstAmount,
-        qst_amount: fare.qstAmount,
-        platform_fee: fare.platformFee,
-        driver_earnings: fare.driverEarnings,
-        status: 'searching',
-      });
-      if (error) throw error;
-      toast({ title: '🚗 Ride requested!', description: 'Looking for a driver near you…' });
-      // Reset form
-      setPickup(null);
-      setDropoff(null);
-      clearRoute();
-    } catch (e: any) {
-      toast({ title: 'Error', description: e.message || 'Failed to request ride', variant: 'destructive' });
-    } finally {
-      setRequesting(false);
+  const handleVisibilityChange = useCallback(() => {
+    if (document.visibilityState === 'hidden') {
+      lastHidden.current = Date.now();
+      return;
     }
-  };
+
+    const idleMs = Date.now() - lastHidden.current;
+    console.log(`[RiderHome] App resumed after ${Math.round(idleMs / 1000)}s`);
+
+    if (idleMs > 5 * 60 * 1000) {
+      getValidAccessToken().catch(() => {});
+    }
+
+    clearMapboxTokenCache();
+
+    if (navigator.geolocation) {
+      try {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            localStorage.setItem('drivveme_gps_warm', JSON.stringify({
+              lat: pos.coords.latitude,
+              lng: pos.coords.longitude,
+              ts: Date.now(),
+            }));
+          },
+          () => {},
+          { enableHighAccuracy: true, timeout: 3000, maximumAge: 0 }
+        );
+      } catch { /* no-op */ }
+    }
+  }, []);
+
+  useEffect(() => {
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleVisibilityChange);
+    };
+  }, [handleVisibilityChange]);
 
   const handleSignOut = async () => {
     await signOut();
     navigate('/landing', { replace: true });
   };
 
-  const greeting = () => {
-    const h = new Date().getHours();
-    if (h < 12) return 'Good morning';
-    if (h < 18) return 'Good afternoon';
-    return 'Good evening';
-  };
-
-  if (tokenLoading) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
-  }
-
   return (
-    <div className="min-h-screen bg-background flex flex-col">
-      {/* Header */}
-      <header className="border-b border-border bg-card/80 backdrop-blur-sm sticky top-0 z-30">
-        <div className="container mx-auto px-4 py-3 flex items-center justify-between">
-          <Logo size="sm" />
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-muted-foreground hidden sm:inline">
-              {profile?.first_name || user?.email}
-            </span>
-            <Button variant="ghost" size="icon" onClick={handleSignOut}>
-              <LogOut className="h-5 w-5" />
-            </Button>
-          </div>
-        </div>
-      </header>
-
-      {/* Content */}
-      <div className="flex-1 flex flex-col lg:flex-row">
-        {/* Map */}
-        <div className="flex-1 relative min-h-[300px] lg:min-h-0">
-          {mapboxToken ? (
-            <MapView
-              token={mapboxToken}
-              pickup={pickup ? { lat: pickup.lat, lng: pickup.lng } : null}
-              dropoff={dropoff ? { lat: dropoff.lat, lng: dropoff.lng } : null}
-              routeGeoJson={routeGeoJson}
-            />
-          ) : (
-            <div className="w-full h-full bg-secondary/30 flex items-center justify-center text-muted-foreground">
-              Map unavailable
-            </div>
-          )}
-        </div>
-
-        {/* Booking panel */}
-        <div className="w-full lg:w-[420px] border-t lg:border-t-0 lg:border-l border-border bg-background p-5 space-y-5 overflow-y-auto max-h-[50vh] lg:max-h-none">
-          <div>
-            <h1 className="font-display text-2xl font-bold">
-              {greeting()}, {profile?.first_name || 'there'} 👋
-            </h1>
-            <p className="text-muted-foreground text-sm mt-1">Where are we headed today?</p>
-          </div>
-
-          {mapboxToken && (
-            <div className="space-y-3">
-              <AddressSearch
-                token={mapboxToken}
-                label="Pickup location"
-                icon="pickup"
-                value={pickup?.address || ''}
-                onSelect={handlePickup}
-                onClear={() => { setPickup(null); clearRoute(); }}
-              />
-              <AddressSearch
-                token={mapboxToken}
-                label="Where to?"
-                icon="dropoff"
-                value={dropoff?.address || ''}
-                onSelect={handleDropoff}
-                onClear={() => { setDropoff(null); clearRoute(); }}
-              />
-            </div>
-          )}
-
-          {fare && (
-            <FareCard
-              fare={fare}
-              distanceKm={distanceKm}
-              durationMin={durationMin}
-              onConfirm={handleRequestRide}
-              loading={requesting}
-            />
-          )}
-        </div>
+    <div className="min-h-screen w-full relative overflow-hidden flex flex-col items-center justify-between">
+      {/* Full-screen background */}
+      <div className="absolute inset-0 z-0">
+        <img
+          src={riderHomeBg}
+          alt="DrivveMe"
+          className="w-full h-full object-cover object-center"
+        />
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              'linear-gradient(to bottom, rgba(15,5,30,0.45) 0%, rgba(15,5,30,0.15) 40%, rgba(15,5,30,0.65) 100%)',
+          }}
+        />
       </div>
+
+      {/* Logo top */}
+      <div className="relative z-10 pt-12">
+        <Logo size="lg" />
+      </div>
+
+      {/* Center greeting */}
+      <motion.div
+        className="relative z-10 flex flex-col items-center gap-10 px-6 pb-24"
+        initial={{ opacity: 0, y: 30 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.6, ease: 'easeOut' }}
+      >
+        <div className="text-center space-y-2">
+          <h1
+            className="font-display text-4xl font-bold text-white"
+            style={{ textShadow: '0 0 30px rgba(147,51,234,0.8), 0 2px 8px rgba(0,0,0,0.8)' }}
+          >
+            Where to?
+          </h1>
+          <p className="text-white/70 text-base">Your ride is just one tap away</p>
+        </div>
+
+        {/* Glowing Book a Ride button */}
+        <motion.button
+          onClick={() => navigate('/search')}
+          className="relative group flex items-center gap-3 px-10 py-5 rounded-2xl font-display font-bold text-xl text-white overflow-hidden"
+          style={{
+            background: 'linear-gradient(135deg, hsl(270 80% 45%), hsl(280 90% 35%))',
+            boxShadow:
+              '0 0 30px hsl(270 80% 55% / 0.9), 0 0 60px hsl(270 70% 50% / 0.6), 0 0 100px hsl(270 60% 45% / 0.4)',
+          }}
+          animate={{
+            boxShadow: [
+              '0 0 25px hsl(270 80% 55% / 0.8), 0 0 50px hsl(270 70% 50% / 0.5), 0 0 80px hsl(270 60% 45% / 0.3)',
+              '0 0 45px hsl(270 80% 65% / 1), 0 0 90px hsl(270 70% 60% / 0.8), 0 0 140px hsl(270 60% 55% / 0.6)',
+              '0 0 25px hsl(270 80% 55% / 0.8), 0 0 50px hsl(270 70% 50% / 0.5), 0 0 80px hsl(270 60% 45% / 0.3)',
+            ],
+          }}
+          transition={{
+            duration: 1.4,
+            repeat: Infinity,
+            ease: 'easeInOut',
+          }}
+          whileTap={{ scale: 0.96 }}
+        >
+          {/* Shimmer sweep */}
+          <span
+            className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+            style={{
+              background:
+                'linear-gradient(105deg, transparent 40%, rgba(255,255,255,0.25) 50%, transparent 60%)',
+              backgroundSize: '200% 100%',
+              animation: 'shimmer 1.2s infinite',
+            }}
+          />
+          <Car className="h-6 w-6 relative z-10" />
+          <span className="relative z-10">Book a Ride</span>
+        </motion.button>
+
+        {/* Sub-links */}
+        <div className="flex gap-6 text-white/60 text-sm">
+          <button
+            onClick={() => navigate('/history')}
+            className="hover:text-white transition-colors"
+          >
+            Past Rides
+          </button>
+          <span className="text-white/20">|</span>
+          <button
+            onClick={handleSignOut}
+            className="hover:text-white transition-colors"
+          >
+            Sign Out
+          </button>
+        </div>
+      </motion.div>
     </div>
   );
 };
