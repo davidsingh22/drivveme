@@ -59,6 +59,7 @@ interface DriverProfile {
   average_rating: number;
   total_rides: number;
   total_earnings: number;
+  application_status: string | null;
 }
 
 interface AuthContextType {
