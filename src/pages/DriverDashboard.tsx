@@ -127,9 +127,17 @@ const DriverDashboard = () => {
     return !!ride && ride.driver_id === driverId && ACTIVE_STATUSES.includes(ride.status as typeof ACTIVE_STATUSES[number]);
   }, []);
 
+  const forceUnsubscribeRideStatus = useCallback(() => {
+    const channel = rideStatusChannelRef.current;
+    if (!channel) return;
+    void supabase.removeChannel(channel);
+    rideStatusChannelRef.current = null;
+  }, []);
+
   /** Hard exit: wipe all ride UI state immediately */
   const hardExitRide = useCallback((reason?: string) => {
     console.log('[DriverDash] Hard Exit:', reason);
+    forceUnsubscribeRideStatus();
     setCurrentRide(null);
     setCachedAlertRide(null);
     setNewRideAlertOpen(false);
@@ -139,7 +147,7 @@ const DriverDashboard = () => {
     setNavMode(false);
     setNavSteps([]);
     alertStartTimeRef.current = null;
-  }, []);
+  }, [forceUnsubscribeRideStatus]);
 
   /** Clear all ride-related UI state */
   const clearRideState = useCallback((reason?: string) => {
