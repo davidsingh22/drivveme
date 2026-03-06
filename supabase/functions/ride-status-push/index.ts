@@ -146,6 +146,12 @@ async function sendPush(targetUserId: string, title: string, message: string, da
     mutable_content: true,
     ios_sound: "default",
     android_sound: "default",
+    // iOS-specific: force high-priority alert delivery even when backgrounded/locked
+    apns_push_type_override: "alert",
+    ios_priority: 10,
+    // Android: high priority to wake device
+    android_channel_id: "ride_updates",
+    ttl: 0,
     thread_id: `ride_${data.ride_id}`,
     collapse_id: `ride_status_${data.ride_id}`,
     android_group: `ride_${data.ride_id}`,
