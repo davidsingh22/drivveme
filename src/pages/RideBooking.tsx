@@ -49,7 +49,6 @@ const RideBooking = () => {
       setDropoff({ address: state.dropoffAddress, lat: state.dropoffLat, lng: state.dropoffLng });
     }
     if (state.autoEstimate && state.pickupLat != null && state.dropoffLat != null) {
-      // Auto-fetch route
       setTimeout(() => {
         if (mapboxToken) {
           fetchRouteFromCoords(
@@ -135,9 +134,9 @@ const RideBooking = () => {
     <div className="min-h-screen bg-background flex flex-col">
       <Navbar />
 
-      <div className="flex-1 flex flex-col pt-16">
+      <div className="flex-1 flex flex-col lg:flex-row pt-16">
         {/* Map */}
-        <div className="flex-1 relative min-h-[300px]">
+        <div className="flex-1 relative min-h-[300px] lg:min-h-0">
           {mapboxToken ? (
             <MapView
               token={mapboxToken}
@@ -152,54 +151,21 @@ const RideBooking = () => {
           )}
         </div>
 
-        {/* Fare estimate panel */}
+        {/* Fare estimate panel - right side on desktop, bottom on mobile */}
         {fare && step === 'estimate' && (
           <motion.div
-            initial={{ y: 100, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            className="border-t border-border bg-background p-5 space-y-4"
+            initial={{ x: 100, opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            className="w-full lg:w-[400px] border-l border-border bg-background p-5 space-y-4 overflow-y-auto max-h-[60vh] lg:max-h-none"
           >
-            <div className="flex items-center gap-3">
-              <Button variant="ghost" size="icon" onClick={() => { setStep('input'); setFare(null); setRouteGeoJson(null); }}>
-                <ArrowLeft className="h-5 w-5" />
-              </Button>
-              <h2 className="font-display text-xl font-bold text-gradient">
-                {language === 'fr' ? 'Tarif estimé' : 'Estimated fare'}
-              </h2>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="ml-auto text-primary"
-                onClick={() => navigate('/search')}
-              >
-                {language === 'fr' ? 'Modifier' : 'Modify'}
-              </Button>
-            </div>
-
-            {/* Route info */}
-            <div className="space-y-2">
-              <div className="flex items-start gap-2">
-                <div className="h-3 w-3 rounded-full bg-accent mt-1 flex-shrink-0" />
-                <div>
-                  <p className="text-xs text-muted-foreground">{language === 'fr' ? 'Départ' : 'Pickup'}</p>
-                  <p className="text-sm font-medium">{pickup?.address}</p>
-                </div>
-              </div>
-              <div className="flex items-start gap-2">
-                <div className="h-3 w-3 rounded-sm bg-primary mt-1 flex-shrink-0" />
-                <div>
-                  <p className="text-xs text-muted-foreground">{language === 'fr' ? 'Destination' : 'Destination'}</p>
-                  <p className="text-sm font-medium">{dropoff?.address}</p>
-                </div>
-              </div>
-            </div>
-
             <FareCard
               fare={fare}
               distanceKm={distanceKm}
               durationMin={durationMin}
               onConfirm={handleRequestRide}
               loading={requesting}
+              pickupAddress={pickup?.address}
+              dropoffAddress={dropoff?.address}
             />
           </motion.div>
         )}

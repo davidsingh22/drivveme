@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Power, MapPin, Navigation, DollarSign, Clock, UserCircle, Bell, Map, HelpCircle, Gift } from 'lucide-react';
+import { Power, MapPin, Navigation, DollarSign, Clock, UserCircle, Bell, Map, HelpCircle, Gift, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -231,28 +231,40 @@ const DriverDashboard = () => {
               </Button>
 
               {currentRide && (
-                <Card className="mb-4 p-4 border-primary/30">
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-sm font-semibold text-primary uppercase">{currentRide.status.replace('_', ' ')}</span>
-                    <span className="font-bold text-lg">{formatCurrency(currentRide.estimated_fare, language)}</span>
+                <div className="mb-4 space-y-3">
+                  {/* Pickup address bar */}
+                  <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 p-3">
+                    <MapPin className="h-4 w-4 text-green-500 flex-shrink-0" />
+                    <span className="text-sm font-medium line-clamp-1">{currentRide.pickup_address}</span>
                   </div>
-                  <div className="space-y-2 mb-4">
-                    <div className="flex items-start gap-2"><MapPin className="h-4 w-4 text-primary mt-0.5 flex-shrink-0" /><span className="text-sm line-clamp-1">{currentRide.pickup_address}</span></div>
-                    <div className="flex items-start gap-2"><Navigation className="h-4 w-4 text-accent mt-0.5 flex-shrink-0" /><span className="text-sm line-clamp-1">{currentRide.dropoff_address}</span></div>
-                  </div>
-                  <div className="space-y-2">
-                    {['driver_assigned', 'driver_en_route'].includes(currentRide.status) && (
-                      <Button className="w-full" onClick={() => updateRideStatus('arrived')} disabled={!!busyAction}>Arrived at Pickup</Button>
-                    )}
-                    {currentRide.status === 'arrived' && (
-                      <Button className="w-full gradient-primary" onClick={() => updateRideStatus('in_progress')} disabled={!!busyAction}>Start Ride</Button>
-                    )}
-                    {['arrived', 'in_progress'].includes(currentRide.status) && (
-                      <Button className="w-full bg-green-600 hover:bg-green-700" onClick={() => updateRideStatus('completed')} disabled={!!busyAction}>Complete Ride</Button>
-                    )}
-                    <Button variant="destructive" className="w-full" onClick={cancelRide} disabled={!!busyAction}>Cancel Ride</Button>
-                  </div>
-                </Card>
+
+                  {/* Action buttons - matching Quebec Ride driver view */}
+                  {['driver_assigned', 'driver_en_route'].includes(currentRide.status) && (
+                    <button onClick={() => updateRideStatus('arrived')} disabled={!!busyAction}
+                      className="w-full h-14 text-lg font-bold bg-yellow-500 hover:bg-yellow-600 active:scale-[0.98] text-black rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50">
+                      <MapPin className="h-5 w-5" /> I've Arrived
+                    </button>
+                  )}
+
+                  {currentRide.status === 'arrived' && (
+                    <button onClick={() => updateRideStatus('in_progress')} disabled={!!busyAction}
+                      className="w-full h-14 text-lg font-bold bg-yellow-500/80 hover:bg-yellow-500 active:scale-[0.98] text-black rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50">
+                      <Navigation className="h-5 w-5" /> Start Ride
+                    </button>
+                  )}
+
+                  {['arrived', 'in_progress'].includes(currentRide.status) && (
+                    <button onClick={() => updateRideStatus('completed')} disabled={!!busyAction}
+                      className="w-full h-14 text-lg font-bold bg-accent hover:bg-accent/90 active:scale-[0.98] text-black rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50">
+                      <Clock className="h-5 w-5" /> Complete Ride
+                    </button>
+                  )}
+
+                  <button onClick={cancelRide} disabled={!!busyAction}
+                    className="w-full h-14 text-lg font-bold bg-destructive hover:bg-destructive/90 active:scale-[0.98] text-white rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50">
+                    <X className="h-5 w-5" /> Cancel Ride
+                  </button>
+                </div>
               )}
 
               <div className="flex gap-2 mb-3">
