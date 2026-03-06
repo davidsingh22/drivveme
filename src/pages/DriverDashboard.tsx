@@ -80,6 +80,7 @@ const DriverDashboard = () => {
   const [etaDistanceKm, setEtaDistanceKm] = useState<number | null>(null);
   const [navMode, setNavMode] = useState(false);
   const [navSteps, setNavSteps] = useState<NavigationStep[]>([]);
+  const [rideScreenReady, setRideScreenReady] = useState(false);
   const currentRideRef = useRef<RideRequest | null>(null);
   const newRideAlertOpenRef = useRef(false);
   const alertStartTimeRef = useRef<number | null>(null);
