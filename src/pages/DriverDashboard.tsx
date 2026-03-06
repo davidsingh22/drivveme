@@ -288,7 +288,7 @@ const DriverDashboard = () => {
     setEtaMinutes(null);
     setEtaDistanceKm(null);
 
-    if (status === 'completed') { setCurrentRide(null); setNavMode(false); setNavSteps([]); toast({ title: 'Ride completed!' }); }
+    if (status === 'completed') { clearRideState('Driver completed ride'); toast({ title: 'Ride completed!' }); }
     else { setCurrentRide(r => r ? { ...r, status } : null); toast({ title: status === 'arrived' ? 'Arrived!' : 'Ride started!' }); }
     fireInstantPush(prev.id, status, prev.status, prev.rider_id, user.id);
     try {
@@ -308,7 +308,7 @@ const DriverDashboard = () => {
     const prev = currentRide;
     const riderIdForNotif = prev.rider_id;
     const rideIdForNotif = prev.id;
-    setCurrentRide(null); setEtaMinutes(null); setEtaDistanceKm(null); setNavMode(false); setNavSteps([]);
+    clearRideState('Driver cancelled ride');
     toast({ title: 'Ride cancelled' });
     fireInstantPush(rideIdForNotif, 'cancelled', prev.status, riderIdForNotif, user.id);
     if (riderIdForNotif) {
