@@ -135,21 +135,24 @@ async function sendPush(targetUserId: string, title: string, message: string, da
     return { ok: false, delivered: false, data: { skipped: true } };
   }
 
-  console.log("[ride-status-push] 🔔 Sending push to:", targetUserId, "title:", title);
+  console.log("[ride-status-push] 🔔 Sending push to user:", targetUserId, "| title:", title, "| REST key prefix:", restApiKey.substring(0, 8) + "...");
 
   const basePayload = {
     app_id: ONESIGNAL_APP_ID,
     headings: { en: String(title) },
     contents: { en: String(message) },
+    // Force high priority delivery
     priority: 10,
     content_available: true,
     mutable_content: true,
+    // iOS: sound, badge, priority
     ios_sound: "default",
-    android_sound: "default",
-    // iOS-specific: force high-priority alert delivery even when backgrounded/locked
-    apns_push_type_override: "alert",
+    ios_badgeType: "Increase",
+    ios_badgeCount: 1,
     ios_priority: 10,
-    // Android: high priority to wake device
+    apns_push_type_override: "alert",
+    // Android: sound, priority
+    android_sound: "os_notification",
     android_channel_id: "ride_updates",
     ttl: 0,
     thread_id: `ride_${data.ride_id}`,
