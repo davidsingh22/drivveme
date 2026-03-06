@@ -386,10 +386,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     (async () => {
-      setAuthLoading(true);
       const { data: { session: existingSession } } = await supabase.auth.getSession();
-      // Always keep the session alive — never auto-sign-out.
-      // Users stay signed in until they explicitly log out.
       
       setSession(existingSession);
       setUser(existingSession?.user ?? null);
@@ -397,7 +394,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         if (existingSession?.user) {
           const hydrated = hydrateFromCache(existingSession.user.id);
-          if (hydrated) setAuthLoading(false);
+          // If cache had data, immediately unlock the UI
+          if (hydrated) {
+            setAuthLoading(false);
+            setHasInitialized(true);
+          }
+          // Background load fresh data — UI is already interactive
           await loadUserData(existingSession.user.id);
         } else {
           setProfile(null);

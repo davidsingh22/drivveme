@@ -48,9 +48,13 @@ export function useNotifications(userId?: string) {
         },
         (payload) => {
           const newRow = payload.new as NotificationRow;
-          setItems((prev) => [newRow, ...prev]);
+          setItems((prev) => {
+            // Deduplicate — skip if already in the list
+            if (prev.some((n) => n.id === newRow.id)) return prev;
+            return [newRow, ...prev];
+          });
           if (newRow.type !== 'new_ride') {
-            toast(newRow.title, { description: newRow.message });
+            toast(newRow.title, { description: newRow.message, id: `notif-${newRow.id}` });
           }
         }
       )
