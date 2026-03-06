@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import { Power, MapPin, Navigation, DollarSign, Clock, UserCircle, Bell, Map, HelpCircle, Gift, X, Send, ChevronRight, CornerDownRight, ArrowUp, ArrowLeft as ArrowLeftIcon, ArrowRight as ArrowRightIcon, RotateCw } from 'lucide-react';
 import RideChat from '@/components/RideChat';
 import MapComponent, { type NavigationStep } from '@/components/MapComponent';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -286,7 +287,7 @@ const DriverDashboard = () => {
     </div>
   );
 
-  if (authLoading) return <div className="min-h-screen bg-background flex items-center justify-center">{globalModalLayer}<div className="animate-pulse text-muted-foreground">{t('common.loading')}</div></div>;
+  if (authLoading && !user) return <div className="min-h-screen bg-background p-6 space-y-4">{globalModalLayer}<Skeleton className="h-12 w-48" /><Skeleton className="h-[60vh] w-full rounded-xl" /><div className="flex gap-4"><Skeleton className="h-10 flex-1" /><Skeleton className="h-10 flex-1" /></div></div>;
 
   return (
     <div className="min-h-screen bg-background">

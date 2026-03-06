@@ -10,6 +10,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { formatCurrency } from '@/lib/pricing';
 import Navbar from '@/components/Navbar';
+import { Skeleton } from '@/components/ui/skeleton';
 
 const PLATFORM_FEE = 5.00;
 
@@ -52,7 +53,7 @@ const Earnings = () => {
 
   const availableBalance = Number(driverProfile?.total_earnings) || 0;
 
-  if (authLoading) return <div className="min-h-screen bg-background flex items-center justify-center"><div className="animate-pulse text-muted-foreground">{t('common.loading')}</div></div>;
+  if (authLoading && !user) return <div className="min-h-screen bg-background p-6 space-y-4"><Skeleton className="h-12 w-48" /><Skeleton className="h-[60vh] w-full rounded-xl" /></div>;
 
   return (
     <div className="min-h-screen bg-background">

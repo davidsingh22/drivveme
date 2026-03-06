@@ -324,6 +324,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
           await loadUserData(nextSession.user.id);
 
+          // OneSignal login — 2s delayed background task, never blocks UI
           const osUserId = nextSession.user.id;
           setTimeout(() => {
             (async () => {
@@ -363,7 +364,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 console.log("❌ OneSignal init error (non-blocking):", e);
               }
             })();
-          }, 0);
+          }, 2000);
         } else {
           setProfile(null);
           setDriverProfile(null);
@@ -384,6 +385,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setHasInitialized(true);
       }
     });
+
+    // 3-second failsafe: never leave user on loading screen
+    const authFailsafe = window.setTimeout(() => {
+      if (!hasInitializedRef.current) {
+        console.warn('[Auth] 3s failsafe triggered — forcing authLoading=false');
+        setAuthLoading(false);
+        setHasInitialized(true);
+      }
+    }, 3000);
 
     (async () => {
       const { data: { session: existingSession } } = await supabase.auth.getSession();
@@ -407,6 +417,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setRoles([]);
         }
       } finally {
+        window.clearTimeout(authFailsafe);
         setAuthLoading(false);
         setHasInitialized(true);
       }
