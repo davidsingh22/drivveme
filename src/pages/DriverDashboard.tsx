@@ -84,6 +84,7 @@ const DriverDashboard = () => {
   const currentRideRef = useRef<RideRequest | null>(null);
   const newRideAlertOpenRef = useRef(false);
   const alertStartTimeRef = useRef<number | null>(null);
+  const rideStatusChannelRef = useRef<any>(null);
 
   useEffect(() => { currentRideRef.current = currentRide; }, [currentRide]);
   useEffect(() => { newRideAlertOpenRef.current = newRideAlertOpen; }, [newRideAlertOpen]);
