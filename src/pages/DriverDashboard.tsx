@@ -422,7 +422,7 @@ const DriverDashboard = () => {
     </div>
   );
 
-  if (authLoading && !user) return <div className="min-h-screen bg-background p-6 space-y-4">{globalModalLayer}<Skeleton className="h-12 w-48" /><Skeleton className="h-[60vh] w-full rounded-xl" /><div className="flex gap-4"><Skeleton className="h-10 flex-1" /><Skeleton className="h-10 flex-1" /></div></div>;
+  if ((authLoading && !user) || !rideScreenReady) return <div className="min-h-screen bg-background p-6 space-y-4">{globalModalLayer}<Skeleton className="h-12 w-48" /><Skeleton className="h-[60vh] w-full rounded-xl" /><div className="flex gap-4"><Skeleton className="h-10 flex-1" /><Skeleton className="h-10 flex-1" /></div></div>;
 
   return (
     <div className="min-h-screen bg-background">
