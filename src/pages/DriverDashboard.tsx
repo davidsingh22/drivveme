@@ -84,6 +84,7 @@ const DriverDashboard = () => {
   const currentRideRef = useRef<RideRequest | null>(null);
   const newRideAlertOpenRef = useRef(false);
   const alertStartTimeRef = useRef<number | null>(null);
+  const rideStatusChannelRef = useRef<any>(null);
 
   useEffect(() => { currentRideRef.current = currentRide; }, [currentRide]);
   useEffect(() => { newRideAlertOpenRef.current = newRideAlertOpen; }, [newRideAlertOpen]);
@@ -126,9 +127,17 @@ const DriverDashboard = () => {
     return !!ride && ride.driver_id === driverId && ACTIVE_STATUSES.includes(ride.status as typeof ACTIVE_STATUSES[number]);
   }, []);
 
+  const forceUnsubscribeRideStatus = useCallback(() => {
+    const channel = rideStatusChannelRef.current;
+    if (!channel) return;
+    void supabase.removeChannel(channel);
+    rideStatusChannelRef.current = null;
+  }, []);
+
   /** Hard exit: wipe all ride UI state immediately */
   const hardExitRide = useCallback((reason?: string) => {
     console.log('[DriverDash] Hard Exit:', reason);
+    forceUnsubscribeRideStatus();
     setCurrentRide(null);
     setCachedAlertRide(null);
     setNewRideAlertOpen(false);
@@ -138,7 +147,7 @@ const DriverDashboard = () => {
     setNavMode(false);
     setNavSteps([]);
     alertStartTimeRef.current = null;
-  }, []);
+  }, [forceUnsubscribeRideStatus]);
 
   /** Clear all ride-related UI state */
   const clearRideState = useCallback((reason?: string) => {
@@ -182,7 +191,7 @@ const DriverDashboard = () => {
       try {
         const { data } = await supabase.from('rides').select('*')
           .eq('driver_id', driverId)
-          .not('driver_id', 'is', null)
+          .not('driver_id', 'is', 'null')
           .in('status', ACTIVE_STATUSES)
           .order('created_at', { ascending: false })
           .limit(1)
@@ -267,6 +276,10 @@ const DriverDashboard = () => {
         const mustEvict = updated.driver_id === null || updated.status === 'cancelled' || updated.status === 'completed' || updated.driver_id !== driverId;
 
         if (mustEvict) {
+          // Force unsubscribe immediately so stale events cannot keep reviving UI
+          void supabase.removeChannel(channel);
+          rideStatusChannelRef.current = null;
+
           // Immediate state wipe (Hard Exit)
           setCurrentRide(null);
           hardExitRide(`Realtime eviction: status=${updated.status}, driver=${updated.driver_id}`);
@@ -280,8 +293,24 @@ const DriverDashboard = () => {
       })
       .subscribe();
 
-    return () => { supabase.removeChannel(channel); };
+    rideStatusChannelRef.current = channel;
+    return () => {
+      if (rideStatusChannelRef.current === channel) {
+        rideStatusChannelRef.current = null;
+      }
+      void supabase.removeChannel(channel);
+    };
   }, [currentRide?.id, session?.user?.id, hardExitRide, toast]);
+
+  // Deferred hard reset to bypass render timing glitches on cancelled rides
+  useEffect(() => {
+    if (currentRide?.status !== 'cancelled') return;
+    const timer = window.setTimeout(() => {
+      setCurrentRide(null);
+      hardExitRide('Deferred cancelled-state reset');
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [currentRide?.status, hardExitRide]);
 
   // Today's earnings
   useEffect(() => {
