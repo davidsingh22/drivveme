@@ -401,17 +401,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setSession(existingSession);
       setUser(existingSession?.user ?? null);
 
-      // Immediately sync Median OneSignal bridge on cold start
+      // Median OneSignal cold-start: use median_library_ready callback for guaranteed bridge availability
       if (existingSession?.user) {
-        try {
-          const median = (window as any).median;
-          if (median?.onesignal) {
-            console.log('[Auth] Cold-start: calling median.onesignal.register()');
-            try { median.onesignal.register(); } catch (e) { console.error('[Auth] register() err:', e); }
-            console.log('[Auth] Cold-start: calling median.onesignal.login({ externalId:', existingSession.user.id, '})');
-            try { median.onesignal.login({ externalId: existingSession.user.id }); } catch (e) { console.error('[Auth] login() err:', e); }
-          }
-        } catch (e) { console.error('[Auth] Median cold-start sync error:', e); }
+        const coldStartUid = existingSession.user.id;
+        const doColdStartSync = () => {
+          try {
+            const median = (window as any).median;
+            if (median?.onesignal) {
+              console.log('[Auth] Cold-start: register() + login({ externalId:', coldStartUid, '})');
+              try { median.onesignal.register(); } catch (e) { console.error('[Auth] register() err:', e); }
+              try { median.onesignal.login({ externalId: coldStartUid }); } catch (e) { console.error('[Auth] login() err:', e); }
+            } else {
+              // Deep link fallback if bridge not available
+              console.log('[Auth] Cold-start: Median bridge missing, using deep link fallback');
+              window.location.href = `gonative://onesignal/externalUserId/set?externalId=${encodeURIComponent(coldStartUid)}`;
+            }
+          } catch (e) { console.error('[Auth] Median cold-start sync error:', e); }
+        };
+
+        if ((window as any).median?.onesignal) {
+          doColdStartSync();
+        } else {
+          // Wait for bridge to be injected
+          const prevReady = (window as any).median_library_ready;
+          (window as any).median_library_ready = () => {
+            console.log('[Auth] median_library_ready fired (cold-start)');
+            if (prevReady) prevReady();
+            doColdStartSync();
+          };
+          // Also try after 3s in case callback never fires (web preview)
+          setTimeout(doColdStartSync, 3000);
+        }
       }
 
       try {
