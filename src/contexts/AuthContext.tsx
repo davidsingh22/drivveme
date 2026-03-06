@@ -401,37 +401,65 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setSession(existingSession);
       setUser(existingSession?.user ?? null);
 
-      // Median OneSignal cold-start: use median_library_ready callback for guaranteed bridge availability
+      // Median OneSignal cold-start: poll for bridge then force-link externalUserId
       if (existingSession?.user) {
         const coldStartUid = existingSession.user.id;
-        const doColdStartSync = () => {
-          try {
-            const median = (window as any).median;
-            if (median?.onesignal) {
-              console.log('[Auth] Cold-start: register() + login({ externalId:', coldStartUid, '})');
-              try { median.onesignal.register(); } catch (e) { console.error('[Auth] register() err:', e); }
-              try { median.onesignal.login({ externalId: coldStartUid }); } catch (e) { console.error('[Auth] login() err:', e); }
-            } else {
-              // Deep link fallback if bridge not available
-              console.log('[Auth] Cold-start: Median bridge missing, using deep link fallback');
+
+        const forceLinkDevice = () => {
+          const median = (window as any).median;
+          if (!median?.onesignal) {
+            console.log('[Auth] Cold-start: No bridge, firing deep link fallback');
+            window.location.href = `gonative://onesignal/externalUserId/set?externalId=${encodeURIComponent(coldStartUid)}`;
+            return;
+          }
+          console.log('[Auth] Cold-start: Bridge found. Linking externalId:', coldStartUid);
+          try { median.onesignal.register(); } catch (e) { console.warn('[Auth] register() err:', e); }
+          // Primary: externalUserId.set — this is the call that populates OneSignal's External ID field
+          if (median.onesignal.externalUserId?.set) {
+            try {
+              median.onesignal.externalUserId.set({ externalId: coldStartUid });
+              console.log('[Auth] ✅ externalUserId.set() succeeded:', coldStartUid);
+            } catch (e) {
+              console.warn('[Auth] externalUserId.set() failed, trying login():', e);
+              try { median.onesignal.login({ externalId: coldStartUid }); } catch (e2) { console.warn('[Auth] login() also failed:', e2); }
+            }
+          } else {
+            // Fallback to login() if .set not available
+            try {
+              median.onesignal.login({ externalId: coldStartUid });
+              console.log('[Auth] ✅ login() succeeded:', coldStartUid);
+            } catch (e) {
+              console.warn('[Auth] login() failed, using deep link:', e);
               window.location.href = `gonative://onesignal/externalUserId/set?externalId=${encodeURIComponent(coldStartUid)}`;
             }
-          } catch (e) { console.error('[Auth] Median cold-start sync error:', e); }
+          }
         };
 
-        if ((window as any).median?.onesignal) {
-          doColdStartSync();
-        } else {
-          // Wait for bridge to be injected
-          const prevReady = (window as any).median_library_ready;
-          (window as any).median_library_ready = () => {
-            console.log('[Auth] median_library_ready fired (cold-start)');
-            if (prevReady) prevReady();
-            doColdStartSync();
-          };
-          // Also try after 3s in case callback never fires (web preview)
-          setTimeout(doColdStartSync, 3000);
-        }
+        // Poll for bridge every 300ms up to 30s, then force link
+        const pollStart = Date.now();
+        const pollForBridge = () => {
+          if ((window as any).median?.onesignal) {
+            forceLinkDevice();
+            return;
+          }
+          if (Date.now() - pollStart >= 30_000) {
+            console.warn('[Auth] 30s bridge timeout — forcing deep link');
+            window.location.href = `gonative://onesignal/externalUserId/set?externalId=${encodeURIComponent(coldStartUid)}`;
+            return;
+          }
+          setTimeout(pollForBridge, 300);
+        };
+
+        // Also wire up median_library_ready as a fast-path
+        const prevReady = (window as any).median_library_ready;
+        (window as any).median_library_ready = () => {
+          console.log('[Auth] median_library_ready fired');
+          if (prevReady) prevReady();
+          forceLinkDevice();
+        };
+
+        // Start polling
+        pollForBridge();
       }
 
       try {
