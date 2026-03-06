@@ -191,7 +191,7 @@ const DriverDashboard = () => {
       try {
         const { data } = await supabase.from('rides').select('*')
           .eq('driver_id', driverId)
-          .not('driver_id', 'is', null)
+          .not('driver_id', 'is', 'null')
           .in('status', ACTIVE_STATUSES)
           .order('created_at', { ascending: false })
           .limit(1)
