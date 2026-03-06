@@ -50,38 +50,40 @@ function waitForOneSignal(timeoutMs = 30_000): Promise<boolean> {
 async function linkDevice(userId: string): Promise<boolean> {
   const median = window.median;
 
-  // Strategy 1: register() + login() (preferred)
-  if (median?.onesignal?.login) {
+  // Always register first to ensure device is active
+  if (median?.onesignal?.register) {
+    try { median.onesignal.register(); } catch (e) { console.warn('[OneSignalSync] register() err:', e); }
+  }
+
+  // Strategy 1 (PRIMARY): externalUserId.set() — this populates OneSignal's External ID field
+  if (median?.onesignal?.externalUserId?.set) {
     try {
-      console.log(`[OneSignalSync] Strategy 1: register() + login({ externalId: ${userId} })`);
-      median.onesignal.register();
-      median.onesignal.login({ externalId: userId });
-      console.log(`[OneSignalSync] ✅ login() succeeded for UID: ${userId}`);
+      console.log(`[OneSignalSync] Strategy 1: externalUserId.set({ externalId: ${userId} })`);
+      median.onesignal.externalUserId.set({ externalId: userId });
+      console.log(`[OneSignalSync] ✅ externalUserId.set() succeeded for UID: ${userId}`);
       return true;
     } catch (e) {
       console.error('[OneSignalSync] Strategy 1 failed:', e);
     }
   }
 
-  // Strategy 2: externalUserId.set()
-  if (median?.onesignal?.externalUserId?.set) {
+  // Strategy 2: login() as fallback
+  if (median?.onesignal?.login) {
     try {
-      console.log(`[OneSignalSync] Strategy 2: externalUserId.set({ externalId: ${userId} })`);
-      median.onesignal.register();
-      median.onesignal.externalUserId.set({ externalId: userId });
-      console.log(`[OneSignalSync] ✅ externalUserId.set() succeeded for UID: ${userId}`);
+      console.log(`[OneSignalSync] Strategy 2: login({ externalId: ${userId} })`);
+      median.onesignal.login({ externalId: userId });
+      console.log(`[OneSignalSync] ✅ login() succeeded for UID: ${userId}`);
       return true;
     } catch (e) {
       console.error('[OneSignalSync] Strategy 2 failed:', e);
     }
   }
 
-  // Strategy 3: Deep link fallback (gonative:// URL scheme)
+  // Strategy 3: Deep link nuclear fallback
   try {
     const deepLink = `gonative://onesignal/externalUserId/set?externalId=${encodeURIComponent(userId)}`;
     console.log(`[OneSignalSync] Strategy 3: Deep link fallback → ${deepLink}`);
     window.location.href = deepLink;
-    // Give the deep link handler time to process
     await new Promise((r) => setTimeout(r, 1500));
     console.log(`[OneSignalSync] ✅ Deep link dispatched for UID: ${userId}`);
     return true;
