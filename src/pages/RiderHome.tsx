@@ -7,11 +7,58 @@ import riderHomeBg from '@/assets/rider-home-bg.png';
 import Logo from '@/components/Logo';
 import { clearMapboxTokenCache } from '@/hooks/useMapboxToken';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/integrations/supabase/client';
 
 const RiderHome = () => {
   const navigate = useNavigate();
-  const { signOut } = useAuth();
+  const { user, signOut } = useAuth();
   const gpsStarted = useRef(false);
+
+  // Auto-cancel any active rides when rider lands on home screen
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+
+    (async () => {
+      const { data: activeRides } = await supabase
+        .from('rides')
+        .select('id, status, driver_id')
+        .eq('rider_id', user.id)
+        .in('status', ['searching', 'driver_assigned', 'driver_en_route', 'arrived', 'in_progress'])
+        .order('created_at', { ascending: false });
+
+      if (cancelled || !activeRides?.length) return;
+
+      for (const ride of activeRides) {
+        console.log('[RiderHome] Auto-cancelling orphaned ride:', ride.id, ride.status);
+
+        if (ride.driver_id) {
+          await supabase.from('notifications').insert({
+            user_id: ride.driver_id,
+            ride_id: ride.id,
+            type: 'ride_cancelled',
+            title: 'Ride Cancelled ❌',
+            message: 'The rider cancelled this ride.',
+          });
+        }
+
+        await supabase.from('rides').update({
+          status: 'cancelled',
+          cancelled_at: new Date().toISOString(),
+          cancelled_by: user.id,
+          cancellation_reason: 'Rider returned to home screen',
+        }).eq('id', ride.id);
+
+        if (ride.driver_id) {
+          supabase.functions.invoke('ride-status-push', {
+            body: { ride_id: ride.id, new_status: 'cancelled', old_status: ride.status, rider_id: user.id, driver_id: ride.driver_id },
+          }).catch(() => {});
+        }
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [user]);
 
   // Phase 1: Background GPS warming — 3-second strict timeout, never blocks UI
   useEffect(() => {
