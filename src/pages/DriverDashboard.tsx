@@ -132,19 +132,28 @@ const DriverDashboard = () => {
   useEffect(() => {
     const driverId = session?.user?.id;
     if (!driverId) return;
+    let cancelled = false;
 
     const fetchActiveRide = async () => {
       const { data } = await supabase.from('rides').select('*').eq('driver_id', driverId)
         .in('status', ['driver_assigned', 'driver_en_route', 'arrived', 'in_progress'] as const)
         .order('created_at', { ascending: false }).limit(1).maybeSingle();
-      
+      if (cancelled) return;
+
       if (data) {
-        setCurrentRide(data);
-      } else {
-        // No active ride found — if we had one, clear it (it was cancelled/completed while away)
-        if (currentRideRef.current) {
-          clearRideState('No active ride found on restore — ride was cancelled/completed while app was closed');
+        // Double-check: re-fetch this specific ride to confirm status hasn't changed
+        const { data: freshRide } = await supabase.from('rides').select('status').eq('id', data.id).maybeSingle();
+        if (cancelled) return;
+        const activeStatuses = ['driver_assigned', 'driver_en_route', 'arrived', 'in_progress'];
+        if (freshRide && activeStatuses.includes(freshRide.status)) {
+          setCurrentRide(data);
+        } else {
+          console.log('[DriverDash] Ride', data.id, 'status changed between queries to', freshRide?.status, '— not restoring');
+          clearRideState('Ride status changed during restore — stale ride blocked');
         }
+      } else {
+        // No active ride found — always clear UI to prevent ghosts
+        clearRideState('No active ride found on restore — ride was cancelled/completed while app was closed');
       }
     };
 
@@ -160,10 +169,11 @@ const DriverDashboard = () => {
     document.addEventListener('visibilitychange', onResume);
     window.addEventListener('focus', onResume);
     return () => {
+      cancelled = true;
       document.removeEventListener('visibilitychange', onResume);
       window.removeEventListener('focus', onResume);
     };
-  }, [session?.user?.id]);
+  }, [session?.user?.id, clearRideState]);
 
   // Periodic liveness check: every 8s verify the current ride is still active
   useEffect(() => {
