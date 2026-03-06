@@ -80,6 +80,7 @@ const DriverDashboard = () => {
   const [etaDistanceKm, setEtaDistanceKm] = useState<number | null>(null);
   const [navMode, setNavMode] = useState(false);
   const [navSteps, setNavSteps] = useState<NavigationStep[]>([]);
+  const [rideScreenReady, setRideScreenReady] = useState(false);
   const currentRideRef = useRef<RideRequest | null>(null);
   const newRideAlertOpenRef = useRef(false);
   const alertStartTimeRef = useRef<number | null>(null);
@@ -116,17 +117,60 @@ const DriverDashboard = () => {
     if (!isDriver) navigate('/', { replace: true });
   }, [authLoading, redirectGraceOver, session, profileLoading, roles.length, isDriver, navigate]);
 
-  const ACTIVE_STATUSES: Array<'driver_assigned' | 'driver_en_route' | 'arrived' | 'in_progress'> = ['driver_assigned', 'driver_en_route', 'arrived', 'in_progress'];
+  const ACTIVE_STATUSES = ['driver_assigned', 'driver_en_route', 'arrived', 'in_progress'] as const;
 
-  /** Clear all ride-related UI state */
-  const clearRideState = useCallback((reason?: string) => {
-    console.log('[DriverDash] Clearing ride state:', reason);
+  const isActiveDriverRide = useCallback((
+    ride: { status: string; driver_id: string | null } | null | undefined,
+    driverId: string,
+  ) => {
+    return !!ride && ride.driver_id === driverId && ACTIVE_STATUSES.includes(ride.status as typeof ACTIVE_STATUSES[number]);
+  }, []);
+
+  /** Hard exit: wipe all ride UI state immediately */
+  const hardExitRide = useCallback((reason?: string) => {
+    console.log('[DriverDash] Hard Exit:', reason);
     setCurrentRide(null);
+    setCachedAlertRide(null);
+    setNewRideAlertOpen(false);
+    setNewRideAlertRideId(null);
     setEtaMinutes(null);
     setEtaDistanceKm(null);
     setNavMode(false);
     setNavSteps([]);
+    alertStartTimeRef.current = null;
   }, []);
+
+  /** Clear all ride-related UI state */
+  const clearRideState = useCallback((reason?: string) => {
+    hardExitRide(reason);
+  }, [hardExitRide]);
+
+  // Flash clean on mount: verify local ride still belongs to this driver before map renders
+  useEffect(() => {
+    const driverId = session?.user?.id;
+    let cancelled = false;
+
+    const runFlashClean = async () => {
+      if (!driverId) { setRideScreenReady(true); return; }
+      const localRide = currentRideRef.current;
+      if (!localRide) { setRideScreenReady(true); return; }
+
+      const { data } = await supabase.from('rides').select('id, status, driver_id').eq('id', localRide.id).maybeSingle();
+      if (cancelled) return;
+
+      if (!isActiveDriverRide(data, driverId)) {
+        hardExitRide('Flash Clean: local ride no longer belongs to this driver');
+      }
+      setRideScreenReady(true);
+    };
+
+    setRideScreenReady(false);
+    runFlashClean();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user?.id, isActiveDriverRide, hardExitRide]);
 
   // Restore active ride on mount + on every app resume
   useEffect(() => {
@@ -135,29 +179,35 @@ const DriverDashboard = () => {
     let cancelled = false;
 
     const fetchActiveRide = async () => {
-      const { data } = await supabase.from('rides').select('*').eq('driver_id', driverId)
-        .in('status', ['driver_assigned', 'driver_en_route', 'arrived', 'in_progress'] as const)
-        .order('created_at', { ascending: false }).limit(1).maybeSingle();
-      if (cancelled) return;
+      try {
+        const { data } = await supabase.from('rides').select('*')
+          .eq('driver_id', driverId)
+          .not('driver_id', 'is', null)
+          .in('status', ACTIVE_STATUSES)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
 
-      if (data) {
-        // Double-check: re-fetch this specific ride to confirm status hasn't changed
-        const { data: freshRide } = await supabase.from('rides').select('status, driver_id').eq('id', data.id).maybeSingle();
         if (cancelled) return;
-        const activeStatuses = ['driver_assigned', 'driver_en_route', 'arrived', 'in_progress'];
-        if (freshRide && activeStatuses.includes(freshRide.status) && freshRide.driver_id === driverId) {
-          setCurrentRide(data);
+
+        if (data) {
+          // Double-check exact row to prevent stale/ghost restore
+          const { data: freshRide } = await supabase.from('rides').select('status, driver_id').eq('id', data.id).maybeSingle();
+          if (cancelled) return;
+
+          if (isActiveDriverRide(freshRide, driverId)) {
+            setCurrentRide(data);
+          } else {
+            hardExitRide(`Restore blocked: stale ride ${data.id}`);
+          }
         } else {
-          console.log('[DriverDash] Ride', data.id, 'is stale (status:', freshRide?.status, 'driver:', freshRide?.driver_id, ') — not restoring');
-          clearRideState('Ride status changed during restore — stale ride blocked');
+          hardExitRide('Restore found no active ride for this driver');
         }
-      } else {
-        // No active ride found — ALWAYS clear UI to kill any ghost
-        setCurrentRide(null);
-        setEtaMinutes(null);
-        setEtaDistanceKm(null);
-        setNavMode(false);
-        setNavSteps([]);
+      } catch (error) {
+        console.warn('[DriverDash] Restore failed, forcing hard exit:', error);
+        hardExitRide('Restore error fallback');
+      } finally {
+        if (!cancelled) setRideScreenReady(true);
       }
     };
 
@@ -177,9 +227,9 @@ const DriverDashboard = () => {
       document.removeEventListener('visibilitychange', onResume);
       window.removeEventListener('focus', onResume);
     };
-  }, [session?.user?.id, clearRideState]);
+  }, [session?.user?.id, isActiveDriverRide, hardExitRide]);
 
-  // Periodic liveness check: every 4s verify the current ride is still active (was 8s)
+  // Periodic liveness check: every 4s verify the current ride is still active
   useEffect(() => {
     const rideId = currentRide?.id;
     const driverId = session?.user?.id;
@@ -187,9 +237,9 @@ const DriverDashboard = () => {
 
     const checkRide = async () => {
       const { data } = await supabase.from('rides').select('status, driver_id').eq('id', rideId).maybeSingle();
-      const dead = !data || data.status === 'cancelled' || data.status === 'completed' || data.driver_id !== driverId;
+      const dead = !isActiveDriverRide(data, driverId);
       if (dead) {
-        clearRideState(`Liveness check: ride ${rideId} is now ${data?.status ?? 'missing'} (driver: ${data?.driver_id ?? 'null'})`);
+        hardExitRide(`Liveness: ride ${rideId} evicted (status=${data?.status ?? 'missing'}, driver=${data?.driver_id ?? 'null'})`);
         if (data?.status === 'cancelled') {
           toast({ title: '❌ Ride Cancelled', description: 'This ride has been cancelled.' });
         }
@@ -200,31 +250,38 @@ const DriverDashboard = () => {
     checkRide();
     const interval = setInterval(checkRide, 4000);
     return () => clearInterval(interval);
-  }, [currentRide?.id, session?.user?.id, clearRideState, toast]);
+  }, [currentRide?.id, session?.user?.id, isActiveDriverRide, hardExitRide, toast]);
 
-  // Realtime: detect when current ride is cancelled/completed by rider
+  // Realtime: hard-evict ride as soon as driver is unassigned or ride is cancelled/completed
   useEffect(() => {
     const rideId = currentRide?.id;
     const driverId = session?.user?.id;
     if (!rideId || !driverId) return;
+
     const channel = supabase
       .channel(`driver-ride-status-${rideId}`)
       .on('postgres_changes', {
         event: 'UPDATE', schema: 'public', table: 'rides', filter: `id=eq.${rideId}`,
       }, (payload) => {
-        const updated = payload.new as any;
-        if (updated.status === 'cancelled' || updated.status === 'completed' || updated.driver_id !== driverId) {
-          clearRideState(`Realtime: ride updated to ${updated.status} (driver: ${updated.driver_id})`);
+        const updated = payload.new as { status: string; driver_id: string | null };
+        const mustEvict = updated.driver_id === null || updated.status === 'cancelled' || updated.status === 'completed' || updated.driver_id !== driverId;
+
+        if (mustEvict) {
+          // Immediate state wipe (Hard Exit)
+          setCurrentRide(null);
+          hardExitRide(`Realtime eviction: status=${updated.status}, driver=${updated.driver_id}`);
           if (updated.status === 'cancelled') {
             toast({ title: '❌ Ride Cancelled', description: 'The rider cancelled this ride.' });
           }
-        } else {
-          setCurrentRide(prev => prev ? { ...prev, status: updated.status } : null);
+          return;
         }
+
+        setCurrentRide(prev => prev ? { ...prev, status: updated.status } : null);
       })
       .subscribe();
+
     return () => { supabase.removeChannel(channel); };
-  }, [currentRide?.id, session?.user?.id, clearRideState, toast]);
+  }, [currentRide?.id, session?.user?.id, hardExitRide, toast]);
 
   // Today's earnings
   useEffect(() => {
@@ -365,7 +422,7 @@ const DriverDashboard = () => {
     </div>
   );
 
-  if (authLoading && !user) return <div className="min-h-screen bg-background p-6 space-y-4">{globalModalLayer}<Skeleton className="h-12 w-48" /><Skeleton className="h-[60vh] w-full rounded-xl" /><div className="flex gap-4"><Skeleton className="h-10 flex-1" /><Skeleton className="h-10 flex-1" /></div></div>;
+  if ((authLoading && !user) || !rideScreenReady) return <div className="min-h-screen bg-background p-6 space-y-4">{globalModalLayer}<Skeleton className="h-12 w-48" /><Skeleton className="h-[60vh] w-full rounded-xl" /><div className="flex gap-4"><Skeleton className="h-10 flex-1" /><Skeleton className="h-10 flex-1" /></div></div>;
 
   return (
     <div className="min-h-screen bg-background">
