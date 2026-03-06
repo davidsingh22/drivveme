@@ -17,6 +17,9 @@ const RiderHome = lazy(() => import("./pages/RiderHome"));
 const RideSearch = lazy(() => import("./pages/RideSearch"));
 const RideBooking = lazy(() => import("./pages/RideBooking"));
 const DriverDashboard = lazy(() => import("./pages/DriverDashboard"));
+const DriverMessages = lazy(() => import("./pages/DriverMessages"));
+const RideHistory = lazy(() => import("./pages/RideHistory"));
+const Earnings = lazy(() => import("./pages/Earnings"));
 const AdminPanel = lazy(() => import("./pages/AdminPanel"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
