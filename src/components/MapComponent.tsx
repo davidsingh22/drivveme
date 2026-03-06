@@ -2,7 +2,7 @@ import { useRef, useEffect, useState, useCallback } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { useMapboxToken } from '@/hooks/useMapboxToken';
-import { AlertCircle, Loader2 } from 'lucide-react';
+import { AlertCircle, Loader2, Crosshair } from 'lucide-react';
 
 interface MapComponentProps {
   pickup?: { lat: number; lng: number } | null;
@@ -15,13 +15,30 @@ interface MapComponentProps {
   followDriver?: boolean;
   pickupAddress?: string;
   use3DStyle?: boolean;
+  /** Called whenever a new ETA (in minutes) and distance (km) is calculated for the active route */
+  onRouteInfo?: (etaMinutes: number, distanceKm: number) => void;
+  showRecenter?: boolean;
 }
 
 const defaultCenter: [number, number] = [-73.5673, 45.5017];
 
+const createCarIcon = (): HTMLElement => {
+  const el = document.createElement('div');
+  el.innerHTML = `<svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="20" cy="20" r="18" fill="#a855f7" stroke="white" stroke-width="3"/>
+    <path d="M14 24V17L17 13H23L26 17V24H14Z" fill="white"/>
+    <circle cx="16.5" cy="24" r="1.5" fill="#a855f7"/>
+    <circle cx="23.5" cy="24" r="1.5" fill="#a855f7"/>
+    <rect x="17" y="14" width="6" height="3" rx="1" fill="#a855f7" opacity="0.5"/>
+  </svg>`;
+  el.style.cursor = 'pointer';
+  return el;
+};
+
 const MapComponent = ({
   pickup, dropoff, driverLocation, routeMode = 'pickup-dropoff',
   onMapClick, showUserLocation = true, followDriver = false,
+  onRouteInfo, showRecenter = false,
 }: MapComponentProps) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
@@ -29,6 +46,9 @@ const MapComponent = ({
   const dropoffMarkerRef = useRef<mapboxgl.Marker | null>(null);
   const driverMarkerRef = useRef<mapboxgl.Marker | null>(null);
   const [mapLoaded, setMapLoaded] = useState(false);
+  const routeFetchRef = useRef<number>(0);
+  const lastRouteFetchRef = useRef<string>('');
+  const userInteractedRef = useRef(false);
 
   const { token, loading, error } = useMapboxToken();
 
@@ -48,6 +68,11 @@ const MapComponent = ({
 
     map.on('load', () => setMapLoaded(true));
     map.on('click', (e) => { if (onMapClick) onMapClick(e.lngLat.lat, e.lngLat.lng); });
+    
+    // Track user interaction to pause auto-follow
+    map.on('dragstart', () => { userInteractedRef.current = true; });
+    map.on('zoomstart', (e) => { if (!(e as any).flyTo) userInteractedRef.current = true; });
+
     mapRef.current = map;
 
     return () => { map.remove(); mapRef.current = null; setMapLoaded(false); };
@@ -77,24 +102,23 @@ const MapComponent = ({
     } else if (dropoffMarkerRef.current) { dropoffMarkerRef.current.remove(); dropoffMarkerRef.current = null; }
   }, [dropoff, mapLoaded]);
 
+  // Driver car icon marker
   useEffect(() => {
     if (!mapRef.current || !mapLoaded) return;
     if (driverLocation) {
       if (driverMarkerRef.current) {
         driverMarkerRef.current.setLngLat([driverLocation.lng, driverLocation.lat]);
       } else {
-        const el = createMarkerElement('#a855f7');
-        el.style.width = '36px'; el.style.height = '36px';
-        el.style.boxShadow = '0 4px 14px rgba(168,85,247,0.5)';
-        driverMarkerRef.current = new mapboxgl.Marker(el).setLngLat([driverLocation.lng, driverLocation.lat]).addTo(mapRef.current);
+        const el = createCarIcon();
+        driverMarkerRef.current = new mapboxgl.Marker({ element: el }).setLngLat([driverLocation.lng, driverLocation.lat]).addTo(mapRef.current);
       }
-      if (followDriver) {
+      if (followDriver && !userInteractedRef.current) {
         mapRef.current.easeTo({ center: [driverLocation.lng, driverLocation.lat], duration: 1000 });
       }
     } else if (driverMarkerRef.current) { driverMarkerRef.current.remove(); driverMarkerRef.current = null; }
   }, [driverLocation, mapLoaded, followDriver]);
 
-  // Fetch and render route
+  // Fetch and render route with ETA
   useEffect(() => {
     if (!mapRef.current || !mapLoaded || !token) return;
     const map = mapRef.current;
@@ -112,14 +136,29 @@ const MapComponent = ({
       return;
     }
 
+    // Throttle: only re-fetch if coords changed meaningfully (>50m)
+    const key = `${start.lat.toFixed(4)},${start.lng.toFixed(4)}-${end.lat.toFixed(4)},${end.lng.toFixed(4)}`;
+    if (key === lastRouteFetchRef.current) return;
+
+    const fetchId = ++routeFetchRef.current;
+
     const fetchRoute = async () => {
       try {
-        const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${start!.lng},${start!.lat};${end!.lng},${end!.lat}?geometries=geojson&access_token=${token}`;
+        const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${start!.lng},${start!.lat};${end!.lng},${end!.lat}?geometries=geojson&overview=full&steps=true&access_token=${token}`;
         const res = await fetch(url);
         const data = await res.json();
+        if (fetchId !== routeFetchRef.current) return; // stale
         if (!data.routes?.[0]?.geometry) return;
 
-        const geojson = { type: 'Feature' as const, properties: {}, geometry: data.routes[0].geometry };
+        lastRouteFetchRef.current = key;
+
+        const route = data.routes[0];
+        const etaMinutes = route.duration / 60;
+        const distanceKm = route.distance / 1000;
+
+        if (onRouteInfo) onRouteInfo(etaMinutes, distanceKm);
+
+        const geojson = { type: 'Feature' as const, properties: {}, geometry: route.geometry };
 
         if (map.getSource('route')) {
           (map.getSource('route') as mapboxgl.GeoJSONSource).setData(geojson as any);
@@ -127,19 +166,47 @@ const MapComponent = ({
           map.addSource('route', { type: 'geojson', data: geojson as any });
           map.addLayer({
             id: 'route-line', type: 'line', source: 'route',
-            paint: { 'line-color': '#a855f7', 'line-width': 4, 'line-opacity': 0.8 },
+            layout: { 'line-join': 'round', 'line-cap': 'round' },
+            paint: { 'line-color': '#a855f7', 'line-width': 5, 'line-opacity': 0.85 },
           });
+        }
+
+        // Fit bounds on first route draw
+        if (start && end) {
+          const bounds = new mapboxgl.LngLatBounds();
+          bounds.extend([start!.lng, start!.lat]);
+          bounds.extend([end!.lng, end!.lat]);
+          map.fitBounds(bounds, { padding: 80, maxZoom: 15, duration: 800 });
         }
       } catch (err) { console.error('Route fetch error:', err); }
     };
 
     fetchRoute();
-  }, [pickup, dropoff, driverLocation, routeMode, mapLoaded, token]);
+  }, [pickup, dropoff, driverLocation, routeMode, mapLoaded, token, onRouteInfo]);
+
+  const handleRecenter = useCallback(() => {
+    if (!mapRef.current || !driverLocation) return;
+    userInteractedRef.current = false;
+    mapRef.current.flyTo({ center: [driverLocation.lng, driverLocation.lat], zoom: 15, duration: 800 });
+  }, [driverLocation]);
 
   if (loading) return <div className="w-full h-full flex items-center justify-center bg-muted"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>;
   if (error) return <div className="w-full h-full flex items-center justify-center bg-muted text-destructive"><AlertCircle className="h-6 w-6 mr-2" />Map unavailable</div>;
 
-  return <div ref={mapContainerRef} className="w-full h-full" />;
+  return (
+    <div className="w-full h-full relative">
+      <div ref={mapContainerRef} className="w-full h-full" />
+      {showRecenter && driverLocation && (
+        <button
+          onClick={handleRecenter}
+          className="absolute bottom-6 right-6 z-10 h-12 w-12 rounded-full bg-background/90 border border-border shadow-lg flex items-center justify-center hover:bg-background transition-colors"
+          title="Recenter"
+        >
+          <Crosshair className="h-5 w-5 text-primary" />
+        </button>
+      )}
+    </div>
+  );
 };
 
 export default MapComponent;

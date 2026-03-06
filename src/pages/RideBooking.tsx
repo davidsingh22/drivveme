@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { ArrowLeft, Loader2, CheckCircle, Car, MapPin, Navigation, Phone } from 'lucide-react';
+import { ArrowLeft, Loader2, CheckCircle, Car, MapPin, Navigation, Phone, Clock } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { useMapboxToken } from '@/hooks/useMapboxToken';
@@ -10,6 +10,7 @@ import { calculateFare, FareEstimate } from '@/lib/pricing';
 import { Button } from '@/components/ui/button';
 import Navbar from '@/components/Navbar';
 import MapView from '@/components/ride/MapView';
+import MapComponent from '@/components/MapComponent';
 import FareCard from '@/components/ride/FareCard';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { toast as sonnerToast } from 'sonner';
@@ -30,6 +31,10 @@ interface ActiveRide {
   pickup_address: string;
   dropoff_address: string;
   estimated_fare: number;
+  pickup_lat?: number;
+  pickup_lng?: number;
+  dropoff_lat?: number;
+  dropoff_lng?: number;
 }
 
 interface DriverDetails {
@@ -85,10 +90,14 @@ const RideBooking = () => {
   // Active ride tracking
   const [activeRide, setActiveRide] = useState<ActiveRide | null>(null);
   const [driverDetails, setDriverDetails] = useState<DriverDetails | null>(null);
+  const [driverLocation, setDriverLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [etaMinutes, setEtaMinutes] = useState<number | null>(null);
 
   const handleRideCompleted = useCallback((ride: RideCompletionPayload) => {
     setActiveRide(null);
     setDriverDetails(null);
+    setDriverLocation(null);
+    setEtaMinutes(null);
     setConfirmed(false);
     setPostCancelState('none');
 
@@ -119,25 +128,21 @@ const RideBooking = () => {
     if (state.autoEstimate && state.pickupLat != null && state.dropoffLat != null) {
       setTimeout(() => {
         if (mapboxToken) {
-          fetchRouteFromCoords(
-            state.pickupLat, state.pickupLng,
-            state.dropoffLat, state.dropoffLng
-          );
+          fetchRouteFromCoords(state.pickupLat, state.pickupLng, state.dropoffLat, state.dropoffLng);
         }
       }, 500);
     }
   }, [routeLocation.state, mapboxToken]);
 
-  // Recover latest ride on mount and force review redirect for newly-completed rides
+  // Recover latest ride on mount
   useEffect(() => {
     if (!user) return;
-
     let cancelled = false;
 
     (async () => {
       const { data: latestRide } = await supabase
         .from('rides')
-        .select('id, status, driver_id, pickup_address, dropoff_address, estimated_fare, actual_fare, updated_at')
+        .select('id, status, driver_id, pickup_address, dropoff_address, estimated_fare, actual_fare, updated_at, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng')
         .eq('rider_id', user.id)
         .in('status', ['searching', 'driver_assigned', 'driver_en_route', 'arrived', 'in_progress', 'completed'])
         .order('updated_at', { ascending: false })
@@ -148,12 +153,7 @@ const RideBooking = () => {
 
       if (latestRide.status === 'completed') {
         const { data: existingRating } = await supabase
-          .from('ratings')
-          .select('id')
-          .eq('ride_id', latestRide.id)
-          .limit(1)
-          .maybeSingle();
-
+          .from('ratings').select('id').eq('ride_id', latestRide.id).limit(1).maybeSingle();
         if (!cancelled && !existingRating) {
           handleRideCompleted(latestRide as RideCompletionPayload);
         }
@@ -164,9 +164,7 @@ const RideBooking = () => {
       if (latestRide.driver_id) fetchDriverDetails(latestRide.driver_id);
     })();
 
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [user, handleRideCompleted]);
 
   // Real-time subscription for active ride status
@@ -175,52 +173,53 @@ const RideBooking = () => {
 
     const channel = supabase
       .channel(`ride-tracking:${activeRide.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'rides',
-          filter: `id=eq.${activeRide.id}`,
-        },
-        (payload) => {
-          const updated = payload.new as RideCompletionPayload & { status: RideStatus };
-          console.log('[RideBooking] Ride updated:', updated.status);
+      .on('postgres_changes', {
+        event: 'UPDATE', schema: 'public', table: 'rides', filter: `id=eq.${activeRide.id}`,
+      }, (payload) => {
+        const updated = payload.new as RideCompletionPayload & { status: RideStatus; pickup_lat: number; pickup_lng: number; dropoff_lat: number; dropoff_lng: number };
 
-          // Show toast for status changes
-          const label = STATUS_LABELS[updated.status];
-          if (label) {
-            sonnerToast(`${label.icon} ${language === 'fr' ? label.fr : label.en}`);
-          }
+        const label = STATUS_LABELS[updated.status];
+        if (label) sonnerToast(`${label.icon} ${language === 'fr' ? label.fr : label.en}`);
 
-          if (updated.status === 'completed') {
-            handleRideCompleted(updated);
-            return;
-          }
-
-          if (updated.status === 'cancelled') {
-            // Driver cancelled — show options immediately
-            setActiveRide(null);
-            setDriverDetails(null);
-            setConfirmed(false);
-            setPostCancelState('show_options');
-            return;
-          }
-
-          setActiveRide((prev) => (prev ? { ...prev, status: updated.status, driver_id: updated.driver_id } : null));
-
-          // Fetch driver details when assigned
-          if (updated.driver_id && updated.status === 'driver_assigned') {
-            fetchDriverDetails(updated.driver_id);
-          }
+        if (updated.status === 'completed') { handleRideCompleted(updated); return; }
+        if (updated.status === 'cancelled') {
+          setActiveRide(null); setDriverDetails(null); setDriverLocation(null); setEtaMinutes(null);
+          setConfirmed(false); setPostCancelState('show_options');
+          return;
         }
-      )
+
+        setActiveRide((prev) => (prev ? { ...prev, status: updated.status, driver_id: updated.driver_id } : null));
+        if (updated.driver_id && updated.status === 'driver_assigned') fetchDriverDetails(updated.driver_id);
+      })
       .subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, [activeRide?.id, language, handleRideCompleted]);
+
+  // Subscribe to driver_locations for live driver position
+  useEffect(() => {
+    if (!activeRide?.driver_id) { setDriverLocation(null); return; }
+    const driverId = activeRide.driver_id;
+
+    // Fetch initial location
+    (async () => {
+      const { data } = await (supabase as any)
+        .from('driver_locations').select('lat, lng').eq('driver_id', driverId).eq('is_online', true).maybeSingle();
+      if (data) setDriverLocation({ lat: data.lat, lng: data.lng });
+    })();
+
+    const channel = supabase
+      .channel(`rider-driver-loc-${driverId}`)
+      .on('postgres_changes', {
+        event: 'UPDATE', schema: 'public', table: 'driver_locations', filter: `driver_id=eq.${driverId}`,
+      }, (payload) => {
+        const loc = payload.new as { lat: number; lng: number; is_online: boolean };
+        if (loc.is_online) setDriverLocation({ lat: loc.lat, lng: loc.lng });
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [activeRide?.driver_id]);
 
   const fetchDriverDetails = useCallback(async (driverId: string) => {
     const [profileRes, driverRes] = await Promise.all([
@@ -239,42 +238,32 @@ const RideBooking = () => {
     });
   }, []);
 
-  // Fallback reconciliation in case realtime update is missed
+  // Fallback reconciliation
   useEffect(() => {
     if (!activeRide?.id || activeRide.status === 'completed' || activeRide.status === 'cancelled') return;
-
     let cancelled = false;
 
     const reconcileStatus = async () => {
       const { data } = await supabase
         .from('rides')
         .select('id, status, driver_id, pickup_address, dropoff_address, estimated_fare, actual_fare')
-        .eq('id', activeRide.id)
-        .maybeSingle();
-
+        .eq('id', activeRide.id).maybeSingle();
       if (cancelled || !data) return;
-
-      if (data.status === 'completed') {
-        handleRideCompleted(data as RideCompletionPayload);
-        return;
-      }
-
+      if (data.status === 'completed') { handleRideCompleted(data as RideCompletionPayload); return; }
       if (data.status === 'cancelled') {
-        setActiveRide(null);
-        setDriverDetails(null);
-        setConfirmed(false);
-        setPostCancelState('show_options');
+        setActiveRide(null); setDriverDetails(null); setDriverLocation(null); setEtaMinutes(null);
+        setConfirmed(false); setPostCancelState('show_options');
       }
     };
 
     reconcileStatus();
     const interval = window.setInterval(reconcileStatus, 3000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
+    return () => { cancelled = true; window.clearInterval(interval); };
   }, [activeRide?.id, activeRide?.status, handleRideCompleted]);
+
+  const handleRouteInfo = useCallback((eta: number) => {
+    setEtaMinutes(eta);
+  }, []);
 
   const fetchRouteFromCoords = async (pLat: number, pLng: number, dLat: number, dLng: number) => {
     if (!mapboxToken) return;
@@ -290,11 +279,7 @@ const RideBooking = () => {
         setDistanceKm(km);
         setDurationMin(min);
         setFare(calculateFare(km, min));
-        setRouteGeoJson({
-          type: 'Feature',
-          properties: {},
-          geometry: route.geometry,
-        });
+        setRouteGeoJson({ type: 'Feature', properties: {}, geometry: route.geometry });
         setStep('estimate');
       }
     } catch {
@@ -308,22 +293,14 @@ const RideBooking = () => {
     try {
       const { data, error } = await supabase.from('rides').insert({
         rider_id: user.id,
-        pickup_address: pickup.address,
-        pickup_lat: pickup.lat,
-        pickup_lng: pickup.lng,
-        dropoff_address: dropoff.address,
-        dropoff_lat: dropoff.lat,
-        dropoff_lng: dropoff.lng,
-        estimated_fare: fare.total,
-        distance_km: distanceKm,
+        pickup_address: pickup.address, pickup_lat: pickup.lat, pickup_lng: pickup.lng,
+        dropoff_address: dropoff.address, dropoff_lat: dropoff.lat, dropoff_lng: dropoff.lng,
+        estimated_fare: fare.total, distance_km: distanceKm,
         estimated_duration_minutes: Math.round(durationMin),
-        subtotal_before_tax: fare.subtotalBeforeTax,
-        gst_amount: fare.gstAmount,
-        qst_amount: fare.qstAmount,
-        platform_fee: fare.platformFee,
-        driver_earnings: fare.driverEarnings,
-        status: 'searching',
-      }).select('id, status, driver_id, pickup_address, dropoff_address, estimated_fare').single();
+        subtotal_before_tax: fare.subtotalBeforeTax, gst_amount: fare.gstAmount,
+        qst_amount: fare.qstAmount, platform_fee: fare.platformFee,
+        driver_earnings: fare.driverEarnings, status: 'searching',
+      }).select('id, status, driver_id, pickup_address, dropoff_address, estimated_fare, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng').single();
 
       if (error) throw error;
       setConfirmed(true);
@@ -331,9 +308,7 @@ const RideBooking = () => {
       toast({ title: '✅ Payment Confirmed!', description: 'Looking for a driver near you…' });
     } catch (e: any) {
       toast({ title: 'Error', description: e.message || 'Failed to request ride', variant: 'destructive' });
-    } finally {
-      setRequesting(false);
-    }
+    } finally { setRequesting(false); }
   };
 
   const handleCancelRide = async () => {
@@ -341,36 +316,23 @@ const RideBooking = () => {
     const rideId = activeRide.id;
     const driverId = activeRide.driver_id;
 
-    // Save ride info for "modify" option
-    if (pickup && dropoff) {
-      setCancelledRideInfo({ pickup, dropoff });
-    }
+    if (pickup && dropoff) setCancelledRideInfo({ pickup, dropoff });
 
-    // Immediately clear ride & show post-cancel options
-    setActiveRide(null);
-    setConfirmed(false);
-    setDriverDetails(null);
+    setActiveRide(null); setConfirmed(false); setDriverDetails(null); setDriverLocation(null); setEtaMinutes(null);
     setPostCancelState('show_options');
     toast({ title: language === 'fr' ? 'Course annulée' : 'Ride cancelled' });
 
     try {
       if (driverId) {
         await supabase.from('notifications').insert({
-          user_id: driverId,
-          ride_id: rideId,
-          type: 'ride_cancelled',
-          title: 'Ride Cancelled ❌',
-          message: 'The rider cancelled this ride.',
+          user_id: driverId, ride_id: rideId, type: 'ride_cancelled',
+          title: 'Ride Cancelled ❌', message: 'The rider cancelled this ride.',
         });
       }
-
       await supabase.from('rides').update({
-        status: 'cancelled',
-        cancelled_at: new Date().toISOString(),
-        cancelled_by: user.id,
-        cancellation_reason: 'Rider cancelled',
+        status: 'cancelled', cancelled_at: new Date().toISOString(),
+        cancelled_by: user.id, cancellation_reason: 'Rider cancelled',
       }).eq('id', rideId);
-
       if (driverId) {
         supabase.functions.invoke('ride-status-push', {
           body: { ride_id: rideId, new_status: 'cancelled', old_status: activeRide.status, rider_id: user.id, driver_id: driverId },
@@ -382,36 +344,34 @@ const RideBooking = () => {
   };
 
   const handleModifyRide = () => {
-    // Keep pickup/dropoff, go back to estimate step so they can re-request
     setPostCancelState('none');
     if (cancelledRideInfo && pickup && dropoff) {
       setStep('estimate');
-      // Re-fetch route to refresh fare
       fetchRouteFromCoords(pickup.lat, pickup.lng, dropoff.lat, dropoff.lng);
-    } else {
-      setStep('input');
-    }
+    } else { setStep('input'); }
     setCancelledRideInfo(null);
   };
 
   const handleBackToHome = () => {
-    setPostCancelState('none');
-    setCancelledRideInfo(null);
-    setStep('input');
-    setFare(null);
-    setPickup(null);
-    setDropoff(null);
-    setRouteGeoJson(null);
+    setPostCancelState('none'); setCancelledRideInfo(null);
+    setStep('input'); setFare(null); setPickup(null); setDropoff(null); setRouteGeoJson(null);
     navigate('/rider-home');
   };
 
   if (tokenLoading) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
+    return <div className="min-h-screen bg-background flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>;
   }
+
+  // Determine map props for active ride
+  const ridePickup = activeRide ? { lat: activeRide.pickup_lat!, lng: activeRide.pickup_lng! } : null;
+  const rideDropoff = activeRide ? { lat: activeRide.dropoff_lat!, lng: activeRide.dropoff_lng! } : null;
+  const rideRouteMode = activeRide
+    ? (activeRide.status === 'in_progress' ? 'driver-to-dropoff' as const : 'driver-to-pickup' as const)
+    : undefined;
+
+  const etaLabel = activeRide
+    ? (activeRide.status === 'in_progress' ? (language === 'fr' ? 'Arrivée estimée' : 'ETA to Destination') : (language === 'fr' ? 'Arrivée du chauffeur' : 'Time to Pickup'))
+    : null;
 
   // Active ride tracking view
   const renderActiveRidePanel = () => {
@@ -440,6 +400,19 @@ const RideBooking = () => {
             <Loader2 className="h-5 w-5 animate-spin mx-auto mt-2 text-primary" />
           )}
         </div>
+
+        {/* ETA Banner */}
+        {etaMinutes !== null && activeRide.status !== 'searching' && (
+          <div className="rounded-xl border border-primary/30 bg-primary/10 p-3 text-center">
+            <div className="flex items-center justify-center gap-2 mb-1">
+              <Clock className="h-4 w-4 text-primary" />
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{etaLabel}</p>
+            </div>
+            <p className="text-2xl font-bold text-primary">
+              {Math.round(etaMinutes)} min
+            </p>
+          </div>
+        )}
 
         {/* Driver Details */}
         {driverDetails && activeRide.driver_id && (
@@ -489,23 +462,15 @@ const RideBooking = () => {
           </div>
         </div>
 
-        {/* Cancel button (only when not terminal) */}
+        {/* Cancel button */}
         {!isTerminal && activeRide.status !== 'in_progress' && (
-          <Button
-            variant="destructive"
-            className="w-full h-12"
-            onClick={handleCancelRide}
-          >
+          <Button variant="destructive" className="w-full h-12" onClick={handleCancelRide}>
             {language === 'fr' ? 'Annuler la course' : 'Cancel Ride'}
           </Button>
         )}
 
-        {/* Completed → go home */}
         {isTerminal && (
-          <Button
-            className="w-full h-12 gradient-primary"
-            onClick={() => navigate('/rider-home')}
-          >
+          <Button className="w-full h-12 gradient-primary" onClick={() => navigate('/rider-home')}>
             {language === 'fr' ? 'Retour à l\'accueil' : 'Back to Home'}
           </Button>
         )}
@@ -520,7 +485,17 @@ const RideBooking = () => {
       <div className="flex-1 flex flex-col lg:flex-row pt-16">
         {/* Map */}
         <div className="flex-1 relative min-h-[300px] lg:min-h-0">
-          {mapboxToken ? (
+          {activeRide && mapboxToken ? (
+            <MapComponent
+              pickup={ridePickup}
+              dropoff={rideDropoff}
+              driverLocation={driverLocation}
+              routeMode={rideRouteMode}
+              followDriver={true}
+              onRouteInfo={handleRouteInfo}
+              showRecenter={!!driverLocation}
+            />
+          ) : mapboxToken ? (
             <MapView
               token={mapboxToken}
               pickup={pickup ? { lat: pickup.lat, lng: pickup.lng } : null}
@@ -537,30 +512,18 @@ const RideBooking = () => {
         {/* Post-cancel options panel */}
         {postCancelState === 'show_options' && !activeRide && (
           <motion.div
-            initial={{ x: 100, opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
+            initial={{ x: 100, opacity: 0 }} animate={{ x: 0, opacity: 1 }}
             className="w-full lg:w-[400px] border-l border-border bg-background p-6 space-y-5 overflow-y-auto max-h-[60vh] lg:max-h-none flex flex-col items-center justify-center"
           >
             <div className="text-center space-y-2">
               <p className="text-4xl">❌</p>
-              <h2 className="text-xl font-bold text-foreground">
-                {language === 'fr' ? 'Course annulée' : 'Ride Cancelled'}
-              </h2>
-              <p className="text-sm text-muted-foreground">
-                {language === 'fr' ? 'Que souhaitez-vous faire ?' : 'What would you like to do?'}
-              </p>
+              <h2 className="text-xl font-bold text-foreground">{language === 'fr' ? 'Course annulée' : 'Ride Cancelled'}</h2>
+              <p className="text-sm text-muted-foreground">{language === 'fr' ? 'Que souhaitez-vous faire ?' : 'What would you like to do?'}</p>
             </div>
-            <Button
-              className="w-full h-14 text-lg font-bold gradient-primary"
-              onClick={handleModifyRide}
-            >
+            <Button className="w-full h-14 text-lg font-bold gradient-primary" onClick={handleModifyRide}>
               {language === 'fr' ? '✏️ Modifier la course' : '✏️ Modify Ride'}
             </Button>
-            <Button
-              variant="outline"
-              className="w-full h-14 text-lg font-bold border-border"
-              onClick={handleBackToHome}
-            >
+            <Button variant="outline" className="w-full h-14 text-lg font-bold border-border" onClick={handleBackToHome}>
               {language === 'fr' ? '🏠 Retour à l\'accueil' : '🏠 Back to Home'}
             </Button>
           </motion.div>
@@ -568,22 +531,15 @@ const RideBooking = () => {
 
         {/* Active ride tracking panel */}
         {activeRide ? renderActiveRidePanel() : (
-          /* Fare estimate panel */
           postCancelState !== 'show_options' && fare && step === 'estimate' && (
             <motion.div
-              initial={{ x: 100, opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
+              initial={{ x: 100, opacity: 0 }} animate={{ x: 0, opacity: 1 }}
               className="w-full lg:w-[400px] border-l border-border bg-background p-5 space-y-4 overflow-y-auto max-h-[60vh] lg:max-h-none"
             >
               <FareCard
-                fare={fare}
-                distanceKm={distanceKm}
-                durationMin={durationMin}
-                onConfirm={handleRequestRide}
-                loading={requesting}
-                confirmed={confirmed}
-                pickupAddress={pickup?.address}
-                dropoffAddress={dropoff?.address}
+                fare={fare} distanceKm={distanceKm} durationMin={durationMin}
+                onConfirm={handleRequestRide} loading={requesting} confirmed={confirmed}
+                pickupAddress={pickup?.address} dropoffAddress={dropoff?.address}
               />
             </motion.div>
           )
