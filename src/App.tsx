@@ -93,18 +93,12 @@ const RouteRestorer = () => {
     if (!session) return;
     if (location.pathname !== '/') return;
 
-    const last = (() => {
-      try { return localStorage.getItem('last_route'); } catch { return null; }
-    })();
-
-    if (last === '/driver') {
-      if (roles.length === 0 || roles.includes('driver')) {
-        navigate('/driver', { replace: true });
-        return;
-      }
-    }
-
-    if (roles.includes('rider') || (!roles.includes('driver') && !roles.includes('admin'))) {
+    // Always send signed-in users to their correct dashboard on cold start at "/"
+    if (roles.includes('admin')) {
+      navigate('/admin', { replace: true });
+    } else if (roles.includes('driver')) {
+      navigate('/driver', { replace: true });
+    } else {
       navigate('/rider-home', { replace: true });
     }
   }, [authLoading, session, roles, location.pathname, navigate]);

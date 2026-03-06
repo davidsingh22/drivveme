@@ -388,20 +388,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     (async () => {
       setAuthLoading(true);
       const { data: { session: existingSession } } = await supabase.auth.getSession();
-      const rememberMe = localStorage.getItem('drivvme_remember_me') === 'true';
-      const isActiveSession = sessionStorage.getItem('drivvme_session_active') === 'true';
-      
-      if (existingSession && rememberMe) {
-        sessionStorage.setItem('drivvme_session_active', 'true');
-      } else if (existingSession && !rememberMe && !isActiveSession) {
-        localStorage.removeItem('drivvme_remember_me');
-        await supabase.auth.signOut();
-        setAuthLoading(false);
-        setHasInitialized(true);
-        return;
-      } else if (existingSession) {
-        sessionStorage.setItem('drivvme_session_active', 'true');
-      }
+      // Always keep the session alive — never auto-sign-out.
+      // Users stay signed in until they explicitly log out.
       
       setSession(existingSession);
       setUser(existingSession?.user ?? null);
