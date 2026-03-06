@@ -156,12 +156,39 @@ export function initMedianOneSignalAuthLink() {
     if (data.ride_id) window.location.href = "/ride";
   };
 
-  // React to auth state changes
+  // React to auth state changes — always attempt, with retry if bridge not ready yet
   supabase.auth.onAuthStateChange((_event, session) => {
     const uid = session?.user?.id ?? null;
-    if (typeof (window as any).median !== "undefined") {
+    console.log("[OneSignal] onAuthStateChange fired, uid:", uid, "event:", _event);
+
+    if (uid) {
+      // Immediately try register + login, even if median isn't ready yet
+      try {
+        const median = (window as any).median;
+        if (median?.onesignal) {
+          console.log("[OneSignal] Bridge available on auth change, calling register + login now");
+          try { median.onesignal.register(); } catch (e) { console.error("[OneSignal] register() failed:", e); }
+          try {
+            median.onesignal.login({ externalId: uid });
+            console.log("✅ [OneSignal] Immediate login called with:", uid);
+          } catch (e) {
+            console.error("[OneSignal] login() failed:", e);
+          }
+        } else {
+          console.log("[OneSignal] Bridge NOT ready on auth change, queuing retry");
+        }
+      } catch (e) {
+        console.error("[OneSignal] Error during immediate auth login:", e);
+      }
+
+      // Always run the retry-based attemptLogin to ensure it sticks
       applyLogin(uid);
     } else {
+      applyLogin(null);
+    }
+
+    // Also store pending in case median_library_ready fires later
+    if (typeof (window as any).median === "undefined") {
       pendingUid = uid;
     }
   });
