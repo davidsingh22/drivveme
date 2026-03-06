@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Eye, EyeOff } from "lucide-react";
@@ -13,7 +13,7 @@ import montrealNightBg from "@/assets/montreal-night-bg.jpg";
 
 const Login = () => {
   const { t } = useLanguage();
-  const { signIn, isLoading, roles, isRider, isDriver, isAdmin, user } = useAuth();
+  const { signIn } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -21,36 +21,14 @@ const Login = () => {
   const [rememberMe] = useState(true);
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const justSignedIn = useRef(false);
-
-  useEffect(() => {
-    if (!isSubmitting) return;
-    if (user) setIsSubmitting(false);
-  }, [isSubmitting, user]);
-
-  useEffect(() => {
-    if (!user || !justSignedIn.current) return;
-    const routeByRole = () => {
-      justSignedIn.current = false;
-      if (isAdmin) navigate("/admin", { replace: true });
-      else if (isDriver) navigate("/driver", { replace: true });
-      else navigate("/landing", { replace: true });
-    };
-    if (roles.length > 0) {
-      routeByRole();
-      return;
-    }
-    const timeout = setTimeout(routeByRole, 2000);
-    return () => clearTimeout(timeout);
-  }, [user, roles.length, isAdmin, isDriver, isRider, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setIsSubmitting(true);
     try {
-      justSignedIn.current = true;
       await signIn(email, password, rememberMe);
+      // AuthRedirect will handle routing once roles load
     } catch (err: any) {
       setError(err.message);
       setIsSubmitting(false);

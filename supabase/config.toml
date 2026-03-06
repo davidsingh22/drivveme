@@ -62,6 +62,3 @@ verify_jwt = false
 
 [functions.apple-pay-verification]
 verify_jwt = false
-
-[functions.seed-test-driver]
-verify_jwt = false

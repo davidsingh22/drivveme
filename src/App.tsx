@@ -5,9 +5,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { LanguageProvider } from "@/contexts/LanguageContext";
 import { AuthProvider } from "@/contexts/AuthContext";
+import AuthRedirect from "@/components/AuthRedirect";
 import Landing from "./pages/Landing";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
+import RiderHome from "./pages/RiderHome";
 import DriverDashboard from "./pages/DriverDashboard";
 import AdminPanel from "./pages/AdminPanel";
 import NotFound from "./pages/NotFound";
@@ -23,10 +25,11 @@ const App = () => (
         <BrowserRouter>
           <AuthProvider>
             <Routes>
-              <Route path="/" element={<Landing />} />
-              <Route path="/landing" element={<Landing />} />
-              <Route path="/login" element={<Login />} />
-              <Route path="/signup" element={<Signup />} />
+              <Route path="/" element={<AuthRedirect><Landing /></AuthRedirect>} />
+              <Route path="/landing" element={<AuthRedirect><Landing /></AuthRedirect>} />
+              <Route path="/login" element={<AuthRedirect><Login /></AuthRedirect>} />
+              <Route path="/signup" element={<AuthRedirect><Signup /></AuthRedirect>} />
+              <Route path="/ride" element={<RiderHome />} />
               <Route path="/driver" element={<DriverDashboard />} />
               <Route path="/admin" element={<AdminPanel />} />
               <Route path="*" element={<NotFound />} />
