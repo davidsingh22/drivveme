@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Power, MapPin, Navigation, DollarSign, Clock, UserCircle, Bell, Map, HelpCircle, Gift, X } from 'lucide-react';
+import { Power, MapPin, Navigation, DollarSign, Clock, UserCircle, Bell, Map, HelpCircle, Gift, X, Send } from 'lucide-react';
+import RideChat from '@/components/RideChat';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -315,18 +316,22 @@ const DriverDashboard = () => {
                   )}
 
                   {/* Pickup address bar */}
-                  <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 p-3">
-                    <MapPin className="h-4 w-4 text-green-500 flex-shrink-0" />
-                    <span className="text-sm font-medium line-clamp-1">{currentRide.pickup_address}</span>
+                  <div className="flex items-center gap-3 rounded-xl border border-border/30 bg-muted/30 p-3">
+                    <MapPin className="h-4 w-4 text-primary flex-shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-[10px] uppercase text-muted-foreground font-semibold">Pickup</p>
+                      <span className="text-sm font-medium line-clamp-1">{currentRide.pickup_address}</span>
+                    </div>
                   </div>
 
-                  {/* Dropoff address bar */}
-                  {currentRide.status === 'in_progress' && (
-                    <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 p-3">
-                      <Navigation className="h-4 w-4 text-primary flex-shrink-0" />
+                  {/* Dropoff address bar – always visible */}
+                  <div className="flex items-center gap-3 rounded-xl border border-border/30 bg-muted/30 p-3">
+                    <Navigation className="h-4 w-4 text-accent flex-shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-[10px] uppercase text-muted-foreground font-semibold">Dropoff</p>
                       <span className="text-sm font-medium line-clamp-1">{currentRide.dropoff_address}</span>
                     </div>
-                  )}
+                  </div>
 
                   {/* Action buttons */}
                   {['driver_assigned', 'driver_en_route'].includes(currentRide.status) && (
@@ -338,7 +343,7 @@ const DriverDashboard = () => {
 
                   {currentRide.status === 'arrived' && (
                     <button onClick={() => updateRideStatus('in_progress')} disabled={!!busyAction}
-                      className="w-full h-14 text-lg font-bold bg-yellow-500/80 hover:bg-yellow-500 active:scale-[0.98] text-black rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50">
+                      className="w-full h-14 text-lg font-bold bg-accent hover:bg-accent/90 active:scale-[0.98] text-black rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50">
                       <Navigation className="h-5 w-5" /> Start Ride
                     </button>
                   )}
@@ -351,8 +356,25 @@ const DriverDashboard = () => {
                   )}
 
                   <button onClick={cancelRide} disabled={!!busyAction}
-                    className="w-full h-14 text-lg font-bold bg-destructive hover:bg-destructive/90 active:scale-[0.98] text-white rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50">
+                    className="w-full h-14 text-lg font-bold bg-destructive hover:bg-destructive/90 active:scale-[0.98] text-destructive-foreground rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50">
                     <X className="h-5 w-5" /> Cancel Ride
+                  </button>
+
+                  {/* Embedded Chat */}
+                  <RideChat rideId={currentRide.id} rideStatus={currentRide.status} role="driver" embedded />
+
+                  {/* Open GPS Navigation Button */}
+                  <button
+                    onClick={() => {
+                      const dest = currentRide.status === 'in_progress'
+                        ? { lat: currentRide.dropoff_lat, lng: currentRide.dropoff_lng }
+                        : { lat: currentRide.pickup_lat, lng: currentRide.pickup_lng };
+                      const url = `https://www.google.com/maps/dir/?api=1&destination=${dest.lat},${dest.lng}&travelmode=driving`;
+                      window.open(url, '_blank');
+                    }}
+                    className="w-full h-14 text-lg font-bold bg-primary hover:bg-primary/90 active:scale-[0.98] text-primary-foreground rounded-xl flex items-center justify-center gap-2 transition-all"
+                  >
+                    <Map className="h-5 w-5" /> Open GPS Navigation
                   </button>
                 </div>
               )}
