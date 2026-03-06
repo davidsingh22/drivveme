@@ -21,6 +21,7 @@ const DriverMessages = lazy(() => import("./pages/DriverMessages"));
 const RideHistory = lazy(() => import("./pages/RideHistory"));
 const Earnings = lazy(() => import("./pages/Earnings"));
 const AdminPanel = lazy(() => import("./pages/AdminPanel"));
+const RideReview = lazy(() => import("./pages/RideReview"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 const queryClient = new QueryClient();
@@ -123,6 +124,7 @@ const AppRoutes = () => (
         <Route path="/rider-home" element={<RiderHome />} />
         <Route path="/search" element={<RideSearch />} />
         <Route path="/ride" element={<RideRoute />} />
+        <Route path="/ride-review" element={<RideReview />} />
         <Route
           path="/driver"
           element={
