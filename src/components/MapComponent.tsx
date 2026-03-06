@@ -4,6 +4,13 @@ import 'mapbox-gl/dist/mapbox-gl.css';
 import { useMapboxToken } from '@/hooks/useMapboxToken';
 import { AlertCircle, Loader2, Crosshair } from 'lucide-react';
 
+export interface NavigationStep {
+  instruction: string;
+  distance: number; // meters
+  duration: number; // seconds
+  maneuver: { type: string; modifier?: string };
+}
+
 interface MapComponentProps {
   pickup?: { lat: number; lng: number } | null;
   dropoff?: { lat: number; lng: number } | null;
@@ -17,7 +24,11 @@ interface MapComponentProps {
   use3DStyle?: boolean;
   /** Called whenever a new ETA (in minutes) and distance (km) is calculated for the active route */
   onRouteInfo?: (etaMinutes: number, distanceKm: number) => void;
+  /** Called with the latest turn-by-turn navigation steps */
+  onNavigationSteps?: (steps: NavigationStep[]) => void;
   showRecenter?: boolean;
+  /** When true, map enters full navigation mode: tighter follow, tilted view */
+  navigationMode?: boolean;
 }
 
 const defaultCenter: [number, number] = [-73.5673, 45.5017];
@@ -38,7 +49,7 @@ const createCarIcon = (): HTMLElement => {
 const MapComponent = ({
   pickup, dropoff, driverLocation, routeMode = 'pickup-dropoff',
   onMapClick, showUserLocation = true, followDriver = false,
-  onRouteInfo, showRecenter = false,
+  onRouteInfo, onNavigationSteps, showRecenter = false, navigationMode = false,
 }: MapComponentProps) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
@@ -60,7 +71,7 @@ const MapComponent = ({
 
     const map = new mapboxgl.Map({
       container: mapContainerRef.current,
-      style: 'mapbox://styles/mapbox/dark-v11',
+      style: 'mapbox://styles/mapbox/navigation-night-v1',
       center: initialCenter as [number, number],
       zoom: 14,
       antialias: true,
@@ -77,6 +88,23 @@ const MapComponent = ({
 
     return () => { map.remove(); mapRef.current = null; setMapLoaded(false); };
   }, [token]);
+
+  // Navigation mode: tilt & zoom
+  useEffect(() => {
+    if (!mapRef.current || !mapLoaded) return;
+    if (navigationMode && driverLocation) {
+      userInteractedRef.current = false;
+      mapRef.current.easeTo({
+        center: [driverLocation.lng, driverLocation.lat],
+        zoom: 16,
+        pitch: 60,
+        bearing: 0,
+        duration: 1200,
+      });
+    } else if (!navigationMode) {
+      mapRef.current.easeTo({ pitch: 0, duration: 600 });
+    }
+  }, [navigationMode, mapLoaded]);
 
   const createMarkerElement = useCallback((color: string) => {
     const el = document.createElement('div');
@@ -112,13 +140,16 @@ const MapComponent = ({
         const el = createCarIcon();
         driverMarkerRef.current = new mapboxgl.Marker({ element: el }).setLngLat([driverLocation.lng, driverLocation.lat]).addTo(mapRef.current);
       }
-      if (followDriver && !userInteractedRef.current) {
-        mapRef.current.easeTo({ center: [driverLocation.lng, driverLocation.lat], duration: 1000 });
+      // In navigation mode always follow; otherwise respect user interaction
+      if ((navigationMode || (followDriver && !userInteractedRef.current))) {
+        const opts: any = { center: [driverLocation.lng, driverLocation.lat], duration: 1000 };
+        if (navigationMode) { opts.zoom = 16; opts.pitch = 60; }
+        mapRef.current.easeTo(opts);
       }
     } else if (driverMarkerRef.current) { driverMarkerRef.current.remove(); driverMarkerRef.current = null; }
-  }, [driverLocation, mapLoaded, followDriver]);
+  }, [driverLocation, mapLoaded, followDriver, navigationMode]);
 
-  // Fetch and render route with ETA
+  // Fetch and render route with ETA + steps
   useEffect(() => {
     if (!mapRef.current || !mapLoaded || !token) return;
     const map = mapRef.current;
@@ -144,7 +175,7 @@ const MapComponent = ({
 
     const fetchRoute = async () => {
       try {
-        const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${start!.lng},${start!.lat};${end!.lng},${end!.lat}?geometries=geojson&overview=full&steps=true&access_token=${token}`;
+        const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${start!.lng},${start!.lat};${end!.lng},${end!.lat}?geometries=geojson&overview=full&steps=true&banner_instructions=true&voice_instructions=true&access_token=${token}`;
         const res = await fetch(url);
         const data = await res.json();
         if (fetchId !== routeFetchRef.current) return; // stale
@@ -158,6 +189,17 @@ const MapComponent = ({
 
         if (onRouteInfo) onRouteInfo(etaMinutes, distanceKm);
 
+        // Extract navigation steps
+        if (onNavigationSteps && route.legs?.[0]?.steps) {
+          const steps: NavigationStep[] = route.legs[0].steps.map((s: any) => ({
+            instruction: s.maneuver?.instruction || '',
+            distance: s.distance,
+            duration: s.duration,
+            maneuver: { type: s.maneuver?.type, modifier: s.maneuver?.modifier },
+          }));
+          onNavigationSteps(steps);
+        }
+
         const geojson = { type: 'Feature' as const, properties: {}, geometry: route.geometry };
 
         if (map.getSource('route')) {
@@ -167,12 +209,12 @@ const MapComponent = ({
           map.addLayer({
             id: 'route-line', type: 'line', source: 'route',
             layout: { 'line-join': 'round', 'line-cap': 'round' },
-            paint: { 'line-color': '#a855f7', 'line-width': 5, 'line-opacity': 0.85 },
+            paint: { 'line-color': '#a855f7', 'line-width': 6, 'line-opacity': 0.9 },
           });
         }
 
-        // Fit bounds on first route draw
-        if (start && end) {
+        // Fit bounds on first route draw (only if not in nav mode)
+        if (!navigationMode && start && end) {
           const bounds = new mapboxgl.LngLatBounds();
           bounds.extend([start!.lng, start!.lat]);
           bounds.extend([end!.lng, end!.lat]);
@@ -182,13 +224,15 @@ const MapComponent = ({
     };
 
     fetchRoute();
-  }, [pickup, dropoff, driverLocation, routeMode, mapLoaded, token, onRouteInfo]);
+  }, [pickup, dropoff, driverLocation, routeMode, mapLoaded, token, onRouteInfo, onNavigationSteps, navigationMode]);
 
   const handleRecenter = useCallback(() => {
     if (!mapRef.current || !driverLocation) return;
     userInteractedRef.current = false;
-    mapRef.current.flyTo({ center: [driverLocation.lng, driverLocation.lat], zoom: 15, duration: 800 });
-  }, [driverLocation]);
+    const opts: any = { center: [driverLocation.lng, driverLocation.lat], zoom: 15, duration: 800 };
+    if (navigationMode) { opts.zoom = 16; opts.pitch = 60; }
+    mapRef.current.flyTo(opts);
+  }, [driverLocation, navigationMode]);
 
   if (loading) return <div className="w-full h-full flex items-center justify-center bg-muted"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>;
   if (error) return <div className="w-full h-full flex items-center justify-center bg-muted text-destructive"><AlertCircle className="h-6 w-6 mr-2" />Map unavailable</div>;

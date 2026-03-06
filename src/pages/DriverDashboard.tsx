@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Power, MapPin, Navigation, DollarSign, Clock, UserCircle, Bell, Map, HelpCircle, Gift, X, Send } from 'lucide-react';
+import { Power, MapPin, Navigation, DollarSign, Clock, UserCircle, Bell, Map, HelpCircle, Gift, X, Send, ChevronRight, CornerDownRight, ArrowUp, ArrowLeft as ArrowLeftIcon, ArrowRight as ArrowRightIcon, RotateCw } from 'lucide-react';
 import RideChat from '@/components/RideChat';
+import MapComponent, { type NavigationStep } from '@/components/MapComponent';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -10,7 +11,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { formatCurrency } from '@/lib/pricing';
 import Navbar from '@/components/Navbar';
-import MapComponent from '@/components/MapComponent';
+
 import DriverProfileModal from '@/components/DriverProfileModal';
 import { useToast } from '@/hooks/use-toast';
 import { RideOfferModal } from '@/components/RideOfferModal';
@@ -43,6 +44,16 @@ interface RideRequest {
 
 const COUNTDOWN_SECONDS = 25;
 
+const getManeuverIcon = (maneuver?: { type: string; modifier?: string }) => {
+  if (!maneuver) return <ArrowUp className="h-5 w-5 text-primary" />;
+  const mod = maneuver.modifier || '';
+  if (mod.includes('left')) return <ArrowLeftIcon className="h-5 w-5 text-primary" />;
+  if (mod.includes('right')) return <ArrowRightIcon className="h-5 w-5 text-primary" />;
+  if (maneuver.type === 'roundabout' || maneuver.type === 'rotary') return <RotateCw className="h-5 w-5 text-primary" />;
+  if (maneuver.type === 'arrive') return <MapPin className="h-5 w-5 text-primary" />;
+  return <ArrowUp className="h-5 w-5 text-primary" />;
+};
+
 const DriverDashboard = () => {
   const { t, language } = useLanguage();
   const { user, session, roles, isDriver, driverProfile, refreshDriverProfile, refreshSession, authLoading, profileLoading } = useAuth();
@@ -64,7 +75,8 @@ const DriverDashboard = () => {
   const [driverLocation, setDriverLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [etaMinutes, setEtaMinutes] = useState<number | null>(null);
   const [etaDistanceKm, setEtaDistanceKm] = useState<number | null>(null);
-
+  const [navMode, setNavMode] = useState(false);
+  const [navSteps, setNavSteps] = useState<NavigationStep[]>([]);
   const currentRideRef = useRef<RideRequest | null>(null);
   const newRideAlertOpenRef = useRef(false);
   const alertStartTimeRef = useRef<number | null>(null);
@@ -127,6 +139,7 @@ const DriverDashboard = () => {
           setCurrentRide(null);
           setEtaMinutes(null);
           setEtaDistanceKm(null);
+          setNavMode(false); setNavSteps([]);
           toast({ title: '❌ Ride Cancelled', description: 'The rider cancelled this ride.' });
         }
       })
@@ -175,6 +188,10 @@ const DriverDashboard = () => {
     setEtaDistanceKm(dist);
   }, []);
 
+  const handleNavigationSteps = useCallback((steps: NavigationStep[]) => {
+    setNavSteps(steps);
+  }, []);
+
   const acceptRide = async (ride: RideRequest) => {
     if (!user || busyAction) return;
     setNewRideAlertOpen(false); setCachedAlertRide(null); setNewRideAlertRideId(null); setBusyAction('accept');
@@ -211,7 +228,7 @@ const DriverDashboard = () => {
     setEtaMinutes(null);
     setEtaDistanceKm(null);
 
-    if (status === 'completed') { setCurrentRide(null); toast({ title: 'Ride completed!' }); }
+    if (status === 'completed') { setCurrentRide(null); setNavMode(false); setNavSteps([]); toast({ title: 'Ride completed!' }); }
     else { setCurrentRide(r => r ? { ...r, status } : null); toast({ title: status === 'arrived' ? 'Arrived!' : 'Ride started!' }); }
     fireInstantPush(prev.id, status, prev.status, prev.rider_id, user.id);
     try {
@@ -231,7 +248,7 @@ const DriverDashboard = () => {
     const prev = currentRide;
     const riderIdForNotif = prev.rider_id;
     const rideIdForNotif = prev.id;
-    setCurrentRide(null); setEtaMinutes(null); setEtaDistanceKm(null);
+    setCurrentRide(null); setEtaMinutes(null); setEtaDistanceKm(null); setNavMode(false); setNavSteps([]);
     toast({ title: 'Ride cancelled' });
     fireInstantPush(rideIdForNotif, 'cancelled', prev.status, riderIdForNotif, user.id);
     if (riderIdForNotif) {
@@ -284,8 +301,26 @@ const DriverDashboard = () => {
             routeMode={routeMode}
             followDriver={!!currentRide}
             onRouteInfo={handleRouteInfo}
+            onNavigationSteps={handleNavigationSteps}
             showRecenter={!!currentRide}
+            navigationMode={navMode}
           />
+          {/* Navigation step overlay on map */}
+          {navMode && navSteps.length > 0 && (
+            <div className="absolute top-4 left-4 right-4 z-20 bg-background/95 backdrop-blur rounded-xl border border-primary/40 p-4 shadow-2xl">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
+                  {getManeuverIcon(navSteps[0]?.maneuver)}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-bold text-foreground line-clamp-2">{navSteps[0]?.instruction}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {navSteps[0]?.distance >= 1000 ? `${(navSteps[0].distance / 1000).toFixed(1)} km` : `${Math.round(navSteps[0]?.distance || 0)} m`}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <motion.div initial={{ x: 100, opacity: 0 }} animate={{ x: 0, opacity: 1 }}
@@ -363,19 +398,32 @@ const DriverDashboard = () => {
                   {/* Embedded Chat */}
                   <RideChat rideId={currentRide.id} rideStatus={currentRide.status} role="driver" embedded />
 
-                  {/* Open GPS Navigation Button */}
+                  {/* Mapbox GPS Navigation Toggle */}
                   <button
-                    onClick={() => {
-                      const dest = currentRide.status === 'in_progress'
-                        ? { lat: currentRide.dropoff_lat, lng: currentRide.dropoff_lng }
-                        : { lat: currentRide.pickup_lat, lng: currentRide.pickup_lng };
-                      const url = `https://www.google.com/maps/dir/?api=1&destination=${dest.lat},${dest.lng}&travelmode=driving`;
-                      window.open(url, '_blank');
-                    }}
-                    className="w-full h-14 text-lg font-bold bg-primary hover:bg-primary/90 active:scale-[0.98] text-primary-foreground rounded-xl flex items-center justify-center gap-2 transition-all"
+                    onClick={() => setNavMode(prev => !prev)}
+                    className={`w-full h-14 text-lg font-bold active:scale-[0.98] rounded-xl flex items-center justify-center gap-2 transition-all ${navMode ? 'bg-accent text-black hover:bg-accent/90' : 'bg-primary hover:bg-primary/90 text-primary-foreground'}`}
                   >
-                    <Map className="h-5 w-5" /> Open GPS Navigation
+                    <Map className="h-5 w-5" /> {navMode ? 'Exit Navigation' : 'Open GPS Navigation'}
                   </button>
+
+                  {/* Navigation Steps List (when nav mode active) */}
+                  {navMode && navSteps.length > 0 && (
+                    <div className="rounded-xl border border-border/30 bg-muted/30 max-h-48 overflow-y-auto">
+                      {navSteps.slice(0, 8).map((step, i) => (
+                        <div key={i} className="flex items-center gap-3 p-2.5 border-b border-border/10 last:border-0">
+                          <div className="h-7 w-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                            {getManeuverIcon(step.maneuver)}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-medium line-clamp-1">{step.instruction}</p>
+                            <p className="text-[10px] text-muted-foreground">
+                              {step.distance >= 1000 ? `${(step.distance / 1000).toFixed(1)} km` : `${Math.round(step.distance)} m`}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
