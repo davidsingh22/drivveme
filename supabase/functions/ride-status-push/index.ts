@@ -103,7 +103,8 @@ function getNotificationConfig(payload: RidePayload, driverInfo?: DriverInfo, et
     case "completed":
       return { targetUserId: rider_id, title: "Ride Completed ✅", message: "You've arrived at your destination. Thanks for riding!", type: "ride_completed" };
     case "cancelled":
-      return { targetUserId: driver_id, title: "Ride Cancelled ❌", message: "The ride has been cancelled.", type: "ride_cancelled" };
+      // ALWAYS notify the rider on cancellation (rider is the one who needs to know)
+      return { targetUserId: rider_id, title: "Ride Cancelled ❌", message: "Your ride has been cancelled.", type: "ride_cancelled" };
     default:
       return null;
   }
