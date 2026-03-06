@@ -102,7 +102,7 @@ const RideReview = () => {
       setSubmitted(true);
       toast({ title: language === 'fr' ? 'Merci!' : 'Thank you!', description: language === 'fr' ? 'Votre évaluation a été envoyée' : 'Your review has been submitted' });
 
-      setTimeout(() => navigate('/rider-home', { replace: true }), 2500);
+      navigate('/rider-home', { replace: true });
     } catch (e: any) {
       toast({ title: 'Error', description: e.message, variant: 'destructive' });
     } finally {
