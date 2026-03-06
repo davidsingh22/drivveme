@@ -116,7 +116,7 @@ const DriverDashboard = () => {
     if (!isDriver) navigate('/', { replace: true });
   }, [authLoading, redirectGraceOver, session, profileLoading, roles.length, isDriver, navigate]);
 
-  const ACTIVE_STATUSES = ['driver_assigned', 'driver_en_route', 'arrived', 'in_progress'] as const;
+  const ACTIVE_STATUSES: Array<'driver_assigned' | 'driver_en_route' | 'arrived' | 'in_progress'> = ['driver_assigned', 'driver_en_route', 'arrived', 'in_progress'];
 
   /** Clear all ride-related UI state */
   const clearRideState = useCallback((reason?: string) => {
