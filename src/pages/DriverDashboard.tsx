@@ -21,6 +21,25 @@ import { consumePendingRide, onPendingRide } from '@/lib/pendingRideStore';
 import montrealDriverBg from '@/assets/montreal-driver-night-bg.png';
 import { HelpDialog } from '@/components/HelpDialog';
 
+/** Fire push notification to rider immediately (don't wait for DB trigger) */
+const fireInstantPush = async (
+  rideId: string,
+  newStatus: string,
+  oldStatus: string,
+  riderId: string | null,
+  driverId: string | null,
+) => {
+  try {
+    const { error } = await supabase.functions.invoke('ride-status-push', {
+      body: { ride_id: rideId, new_status: newStatus, old_status: oldStatus, rider_id: riderId, driver_id: driverId },
+    });
+    if (error) console.warn('[InstantPush] edge fn error:', error);
+    else console.log('[InstantPush] sent for', newStatus);
+  } catch (e) {
+    console.warn('[InstantPush] failed (non-blocking):', e);
+  }
+};
+
 interface RideRequest {
   id: string; rider_id: string; pickup_address: string; pickup_lat: number; pickup_lng: number;
   dropoff_address: string; dropoff_lat: number; dropoff_lng: number; distance_km: number;
@@ -154,6 +173,8 @@ const DriverDashboard = () => {
       }
       setCurrentRide({ ...ride, status: 'driver_assigned' });
       toast({ title: 'Ride accepted!', description: 'Navigate to pickup' });
+      // Fire instant push to rider (non-blocking)
+      fireInstantPush(ride.id, 'driver_assigned', 'searching', ride.rider_id, user.id);
       alertStartTimeRef.current = null;
     } catch { toast({ title: 'Error', variant: 'destructive' }); }
     finally { setBusyAction(null); }
@@ -165,6 +186,8 @@ const DriverDashboard = () => {
     const prev = { ...currentRide };
     if (status === 'completed') { setCurrentRide(null); toast({ title: 'Ride completed!' }); }
     else { setCurrentRide(r => r ? { ...r, status } : null); toast({ title: status === 'arrived' ? 'Arrived!' : 'Ride started!' }); }
+    // Fire instant push to rider (non-blocking)
+    fireInstantPush(prev.id, status, prev.status, prev.rider_id, user.id);
     try {
       const updates: any = { status };
       if (status === 'in_progress') updates.pickup_at = new Date().toISOString();
@@ -179,9 +202,27 @@ const DriverDashboard = () => {
   const cancelRide = async () => {
     if (!currentRide || !user || busyAction) return;
     setBusyAction('cancel');
-    const prev = currentRide; setCurrentRide(null); toast({ title: 'Ride cancelled' });
+    const prev = currentRide;
+    const riderIdForNotif = prev.rider_id;
+    const rideIdForNotif = prev.id;
+    setCurrentRide(null); toast({ title: 'Ride cancelled' });
+    // Fire instant push (non-blocking)
+    fireInstantPush(rideIdForNotif, 'cancelled', prev.status, riderIdForNotif, user.id);
+    // Insert cancellation notification for rider BEFORE updating ride status (RLS requires active ride)
+    if (riderIdForNotif) {
+      await supabase.from('notifications').insert({
+        user_id: riderIdForNotif,
+        ride_id: rideIdForNotif,
+        type: 'ride_cancelled',
+        title: 'Ride Cancelled ❌',
+        message: 'The driver cancelled this ride.',
+      }).then(({ error: notifErr }) => {
+        if (notifErr) console.warn('[DriverDashboard] Failed to insert cancel notification:', notifErr);
+        else console.log('[DriverDashboard] ✅ Cancellation notification inserted for rider');
+      });
+    }
     try {
-      await withTimeout(supabase.from('rides').update({ status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: user.id, driver_id: null }).eq('id', prev.id).then(r => r), 7000, 'Cancel ride');
+      await withTimeout(supabase.from('rides').update({ status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: user.id, driver_id: null }).eq('id', rideIdForNotif).then(r => r), 7000, 'Cancel ride');
     } catch { setCurrentRide(prev); }
     finally { setBusyAction(null); }
   };

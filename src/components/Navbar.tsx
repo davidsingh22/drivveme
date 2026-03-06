@@ -82,7 +82,7 @@ const Navbar = () => {
               </>
             ) : (
               <>
-                <NotificationsBell />
+                <NotificationsBell userId={user.id} />
                 <Button
                   variant="ghost"
                   size="icon"
