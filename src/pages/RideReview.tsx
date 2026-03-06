@@ -22,7 +22,7 @@ const RideReview = () => {
   const state = location.state as {
     rideId: string;
     driverId: string;
-    driverName: string;
+    driverName: string | null;
     fare: number;
     pickupAddress: string;
     dropoffAddress: string;
