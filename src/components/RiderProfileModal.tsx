@@ -4,12 +4,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Camera, Loader2, User } from 'lucide-react';
+import { Camera, Loader2, User, Bell } from 'lucide-react';
 import ProfileDebugInfo from '@/components/ProfileDebugInfo';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { resyncMedianOneSignal } from '@/lib/medianOneSignalAuthLink';
 
 interface RiderProfileModalProps {
   open: boolean;
@@ -107,6 +108,11 @@ const RiderProfileModal = ({ open, onOpenChange }: RiderProfileModalProps) => {
           </div>
         </div>
         <ProfileDebugInfo userId={user?.id} />
+        <Button variant="outline" className="w-full" onClick={() => {
+          if (user?.id) { resyncMedianOneSignal(user.id); toast({ title: 'Re-syncing notifications…' }); }
+        }}>
+          <Bell className="h-4 w-4 mr-2" />Re-sync Notifications
+        </Button>
         <div className="flex gap-3">
           <Button variant="outline" className="flex-1" onClick={() => onOpenChange(false)} disabled={isSaving}>Cancel</Button>
           <Button className="flex-1 gradient-primary" onClick={handleSave} disabled={isSaving || isUploading}>
