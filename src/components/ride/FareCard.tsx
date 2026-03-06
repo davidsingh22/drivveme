@@ -9,11 +9,12 @@ interface FareCardProps {
   durationMin: number;
   onConfirm: () => void;
   loading?: boolean;
+  confirmed?: boolean;
   pickupAddress?: string;
   dropoffAddress?: string;
 }
 
-const FareCard = ({ fare, distanceKm, durationMin, onConfirm, loading, pickupAddress, dropoffAddress }: FareCardProps) => {
+const FareCard = ({ fare, distanceKm, durationMin, onConfirm, loading, confirmed, pickupAddress, dropoffAddress }: FareCardProps) => {
   const { language } = useLanguage();
 
   return (
@@ -102,12 +103,16 @@ const FareCard = ({ fare, distanceKm, durationMin, onConfirm, loading, pickupAdd
       </div>
 
       <Button
-        className="w-full h-14 text-base font-bold gradient-primary"
+        className={`w-full h-14 text-base font-bold ${confirmed ? 'bg-green-600 hover:bg-green-600 text-white' : 'gradient-primary'}`}
         onClick={onConfirm}
-        disabled={loading}
+        disabled={loading || confirmed}
       >
         <CreditCard className="h-5 w-5 mr-2" />
-        {loading ? (language === 'fr' ? 'Demande en cours…' : 'Requesting…') : (language === 'fr' ? 'Confirmer et payer' : 'Confirm Ride & Pay')}
+        {confirmed
+          ? (language === 'fr' ? '✅ Paiement confirmé' : '✅ Payment Confirmed')
+          : loading
+            ? (language === 'fr' ? 'Demande en cours…' : 'Requesting…')
+            : (language === 'fr' ? 'Confirmer et payer' : 'Confirm Ride & Pay')}
       </Button>
     </div>
   );
