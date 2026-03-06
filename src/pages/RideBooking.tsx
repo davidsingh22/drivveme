@@ -184,7 +184,9 @@ const RideBooking = () => {
         if (updated.status === 'completed') { handleRideCompleted(updated); return; }
         if (updated.status === 'cancelled') {
           setActiveRide(null); setDriverDetails(null); setDriverLocation(null); setEtaMinutes(null);
-          setConfirmed(false); setPostCancelState('show_options');
+          setConfirmed(false);
+          sonnerToast(language === 'fr' ? 'Course annulée' : 'Ride cancelled');
+          navigate('/rider-home', { replace: true });
           return;
         }
 
@@ -252,7 +254,8 @@ const RideBooking = () => {
       if (data.status === 'completed') { handleRideCompleted(data as RideCompletionPayload); return; }
       if (data.status === 'cancelled') {
         setActiveRide(null); setDriverDetails(null); setDriverLocation(null); setEtaMinutes(null);
-        setConfirmed(false); setPostCancelState('show_options');
+        setConfirmed(false);
+        navigate('/rider-home', { replace: true });
       }
     };
 
@@ -319,8 +322,8 @@ const RideBooking = () => {
     if (pickup && dropoff) setCancelledRideInfo({ pickup, dropoff });
 
     setActiveRide(null); setConfirmed(false); setDriverDetails(null); setDriverLocation(null); setEtaMinutes(null);
-    setPostCancelState('show_options');
     toast({ title: language === 'fr' ? 'Course annulée' : 'Ride cancelled' });
+    navigate('/rider-home', { replace: true });
 
     try {
       if (driverId) {
