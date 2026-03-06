@@ -8,11 +8,13 @@ import Logo from '@/components/Logo';
 import { clearMapboxTokenCache } from '@/hooks/useMapboxToken';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import { useOneSignalSync } from '@/hooks/useOneSignalSync';
 
 const RiderHome = () => {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
   const gpsStarted = useRef(false);
+  useOneSignalSync();
 
   // Auto-cancel any active rides when rider lands on home screen
   useEffect(() => {

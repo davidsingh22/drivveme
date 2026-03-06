@@ -23,6 +23,7 @@ import { withTimeout } from '@/lib/withTimeout';
 import { consumePendingRide, onPendingRide } from '@/lib/pendingRideStore';
 import montrealDriverBg from '@/assets/montreal-driver-night-bg.png';
 import { HelpDialog } from '@/components/HelpDialog';
+import { useOneSignalSync } from '@/hooks/useOneSignalSync';
 
 /** Fire push notification to rider immediately (don't wait for DB trigger) */
 const fireInstantPush = async (
@@ -60,6 +61,7 @@ const DriverDashboard = () => {
   const { user, session, roles, isDriver, driverProfile, refreshDriverProfile, refreshSession, authLoading, profileLoading } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
+  useOneSignalSync();
 
   const [isOnline, setIsOnline] = useState(false);
   const [currentRide, setCurrentRide] = useState<RideRequest | null>(null);
