@@ -23,21 +23,14 @@ import { HelpDialog } from '@/components/HelpDialog';
 
 /** Fire push notification to rider immediately (don't wait for DB trigger) */
 const fireInstantPush = async (
-  rideId: string,
-  newStatus: string,
-  oldStatus: string,
-  riderId: string | null,
-  driverId: string | null,
+  rideId: string, newStatus: string, oldStatus: string, riderId: string | null, driverId: string | null,
 ) => {
   try {
     const { error } = await supabase.functions.invoke('ride-status-push', {
       body: { ride_id: rideId, new_status: newStatus, old_status: oldStatus, rider_id: riderId, driver_id: driverId },
     });
     if (error) console.warn('[InstantPush] edge fn error:', error);
-    else console.log('[InstantPush] sent for', newStatus);
-  } catch (e) {
-    console.warn('[InstantPush] failed (non-blocking):', e);
-  }
+  } catch (e) { console.warn('[InstantPush] failed:', e); }
 };
 
 interface RideRequest {
@@ -48,7 +41,6 @@ interface RideRequest {
 }
 
 const COUNTDOWN_SECONDS = 25;
-const MAX_OFFER_AGE_SECONDS = 90;
 
 const DriverDashboard = () => {
   const { t, language } = useLanguage();
@@ -69,6 +61,8 @@ const DriverDashboard = () => {
   const [redirectGraceOver, setRedirectGraceOver] = useState(false);
   const [showReconnect, setShowReconnect] = useState(false);
   const [driverLocation, setDriverLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [etaMinutes, setEtaMinutes] = useState<number | null>(null);
+  const [etaDistanceKm, setEtaDistanceKm] = useState<number | null>(null);
 
   const currentRideRef = useRef<RideRequest | null>(null);
   const newRideAlertOpenRef = useRef(false);
@@ -129,8 +123,9 @@ const DriverDashboard = () => {
       }, (payload) => {
         const updated = payload.new as any;
         if (updated.status === 'cancelled') {
-          console.log('[DriverDashboard] Ride cancelled by rider, clearing UI');
           setCurrentRide(null);
+          setEtaMinutes(null);
+          setEtaDistanceKm(null);
           toast({ title: '❌ Ride Cancelled', description: 'The rider cancelled this ride.' });
         }
       })
@@ -174,6 +169,11 @@ const DriverDashboard = () => {
     return () => { supabase.removeChannel(channel); };
   }, [user?.id]);
 
+  const handleRouteInfo = useCallback((eta: number, dist: number) => {
+    setEtaMinutes(eta);
+    setEtaDistanceKm(dist);
+  }, []);
+
   const acceptRide = async (ride: RideRequest) => {
     if (!user || busyAction) return;
     setNewRideAlertOpen(false); setCachedAlertRide(null); setNewRideAlertRideId(null); setBusyAction('accept');
@@ -192,8 +192,9 @@ const DriverDashboard = () => {
         toast({ title: '⚡ Priority Driver Activated!' });
       }
       setCurrentRide({ ...ride, status: 'driver_assigned' });
+      setEtaMinutes(null);
+      setEtaDistanceKm(null);
       toast({ title: 'Ride accepted!', description: 'Navigate to pickup' });
-      // Fire instant push to rider (non-blocking)
       fireInstantPush(ride.id, 'driver_assigned', 'searching', ride.rider_id, user.id);
       alertStartTimeRef.current = null;
     } catch { toast({ title: 'Error', variant: 'destructive' }); }
@@ -204,9 +205,13 @@ const DriverDashboard = () => {
     if (!currentRide || !user || busyAction) return;
     setBusyAction(status);
     const prev = { ...currentRide };
+
+    // Clear ETA when switching routes
+    setEtaMinutes(null);
+    setEtaDistanceKm(null);
+
     if (status === 'completed') { setCurrentRide(null); toast({ title: 'Ride completed!' }); }
     else { setCurrentRide(r => r ? { ...r, status } : null); toast({ title: status === 'arrived' ? 'Arrived!' : 'Ride started!' }); }
-    // Fire instant push to rider (non-blocking)
     fireInstantPush(prev.id, status, prev.status, prev.rider_id, user.id);
     try {
       const updates: any = { status };
@@ -225,20 +230,13 @@ const DriverDashboard = () => {
     const prev = currentRide;
     const riderIdForNotif = prev.rider_id;
     const rideIdForNotif = prev.id;
-    setCurrentRide(null); toast({ title: 'Ride cancelled' });
-    // Fire instant push (non-blocking)
+    setCurrentRide(null); setEtaMinutes(null); setEtaDistanceKm(null);
+    toast({ title: 'Ride cancelled' });
     fireInstantPush(rideIdForNotif, 'cancelled', prev.status, riderIdForNotif, user.id);
-    // Insert cancellation notification for rider BEFORE updating ride status (RLS requires active ride)
     if (riderIdForNotif) {
       await supabase.from('notifications').insert({
-        user_id: riderIdForNotif,
-        ride_id: rideIdForNotif,
-        type: 'ride_cancelled',
-        title: 'Ride Cancelled ❌',
-        message: 'The driver cancelled this ride.',
-      }).then(({ error: notifErr }) => {
-        if (notifErr) console.warn('[DriverDashboard] Failed to insert cancel notification:', notifErr);
-        else console.log('[DriverDashboard] ✅ Cancellation notification inserted for rider');
+        user_id: riderIdForNotif, ride_id: rideIdForNotif, type: 'ride_cancelled',
+        title: 'Ride Cancelled ❌', message: 'The driver cancelled this ride.',
       });
     }
     try {
@@ -254,6 +252,14 @@ const DriverDashboard = () => {
   } : null;
 
   const cleanupOffer = () => { setNewRideAlertOpen(false); setCachedAlertRide(null); setNewRideAlertRideId(null); alertStartTimeRef.current = null; };
+
+  const routeMode = currentRide
+    ? (currentRide.status === 'in_progress' ? 'driver-to-dropoff' : 'driver-to-pickup')
+    : undefined;
+
+  const etaLabel = currentRide
+    ? (currentRide.status === 'in_progress' ? 'ETA to Destination' : 'Time to Pickup')
+    : null;
 
   const globalModalLayer = (
     <div className="fixed inset-0 pointer-events-none" style={{ isolation: 'isolate', zIndex: 2147483647 }}>
@@ -274,8 +280,10 @@ const DriverDashboard = () => {
             pickup={currentRide ? { lat: currentRide.pickup_lat, lng: currentRide.pickup_lng } : null}
             dropoff={currentRide ? { lat: currentRide.dropoff_lat, lng: currentRide.dropoff_lng } : null}
             driverLocation={driverLocation}
-            routeMode={currentRide ? (currentRide.status === 'in_progress' ? 'driver-to-dropoff' : 'driver-to-pickup') : undefined}
+            routeMode={routeMode}
             followDriver={!!currentRide}
+            onRouteInfo={handleRouteInfo}
+            showRecenter={!!currentRide}
           />
         </div>
 
@@ -293,13 +301,34 @@ const DriverDashboard = () => {
 
               {currentRide && (
                 <div className="mb-4 space-y-3">
+                  {/* ETA Banner */}
+                  {etaMinutes !== null && (
+                    <div className="rounded-xl border border-primary/30 bg-primary/10 p-3 text-center">
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{etaLabel}</p>
+                      <p className="text-2xl font-bold text-primary">
+                        {Math.round(etaMinutes)} min
+                      </p>
+                      {etaDistanceKm !== null && (
+                        <p className="text-xs text-muted-foreground">{etaDistanceKm.toFixed(1)} km away</p>
+                      )}
+                    </div>
+                  )}
+
                   {/* Pickup address bar */}
                   <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 p-3">
                     <MapPin className="h-4 w-4 text-green-500 flex-shrink-0" />
                     <span className="text-sm font-medium line-clamp-1">{currentRide.pickup_address}</span>
                   </div>
 
-                  {/* Action buttons - matching Quebec Ride driver view */}
+                  {/* Dropoff address bar */}
+                  {currentRide.status === 'in_progress' && (
+                    <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 p-3">
+                      <Navigation className="h-4 w-4 text-primary flex-shrink-0" />
+                      <span className="text-sm font-medium line-clamp-1">{currentRide.dropoff_address}</span>
+                    </div>
+                  )}
+
+                  {/* Action buttons */}
                   {['driver_assigned', 'driver_en_route'].includes(currentRide.status) && (
                     <button onClick={() => updateRideStatus('arrived')} disabled={!!busyAction}
                       className="w-full h-14 text-lg font-bold bg-yellow-500 hover:bg-yellow-600 active:scale-[0.98] text-black rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50">
