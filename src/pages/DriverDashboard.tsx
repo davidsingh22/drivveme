@@ -116,19 +116,74 @@ const DriverDashboard = () => {
     if (!isDriver) navigate('/', { replace: true });
   }, [authLoading, redirectGraceOver, session, profileLoading, roles.length, isDriver, navigate]);
 
-  // Restore active ride
+  const ACTIVE_STATUSES = ['driver_assigned', 'driver_en_route', 'arrived', 'in_progress'] as const;
+
+  /** Clear all ride-related UI state */
+  const clearRideState = useCallback((reason?: string) => {
+    console.log('[DriverDash] Clearing ride state:', reason);
+    setCurrentRide(null);
+    setEtaMinutes(null);
+    setEtaDistanceKm(null);
+    setNavMode(false);
+    setNavSteps([]);
+  }, []);
+
+  // Restore active ride on mount + on every app resume
   useEffect(() => {
     const driverId = session?.user?.id;
     if (!driverId) return;
-    (async () => {
+
+    const fetchActiveRide = async () => {
       const { data } = await supabase.from('rides').select('*').eq('driver_id', driverId)
-        .in('status', ['driver_assigned', 'driver_en_route', 'arrived', 'in_progress'])
+        .in('status', ACTIVE_STATUSES as unknown as string[])
         .order('created_at', { ascending: false }).limit(1).maybeSingle();
-      if (data) setCurrentRide(data);
-    })();
+      
+      if (data) {
+        setCurrentRide(data);
+      } else {
+        // No active ride found — if we had one, clear it (it was cancelled/completed while away)
+        if (currentRideRef.current) {
+          clearRideState('No active ride found on restore — ride was cancelled/completed while app was closed');
+        }
+      }
+    };
+
+    fetchActiveRide();
+
+    // Also re-check on app resume (visibility change)
+    const onResume = () => {
+      if (document.visibilityState === 'visible') {
+        console.log('[DriverDash] App resumed, re-checking active ride');
+        fetchActiveRide();
+      }
+    };
+    document.addEventListener('visibilitychange', onResume);
+    window.addEventListener('focus', onResume);
+    return () => {
+      document.removeEventListener('visibilitychange', onResume);
+      window.removeEventListener('focus', onResume);
+    };
   }, [session?.user?.id]);
 
-  // Realtime: detect when current ride is cancelled by rider
+  // Periodic liveness check: every 8s verify the current ride is still active
+  useEffect(() => {
+    const rideId = currentRide?.id;
+    if (!rideId) return;
+
+    const interval = setInterval(async () => {
+      const { data } = await supabase.from('rides').select('status').eq('id', rideId).maybeSingle();
+      if (!data || data.status === 'cancelled' || data.status === 'completed') {
+        clearRideState(`Liveness check: ride ${rideId} is now ${data?.status ?? 'missing'}`);
+        if (data?.status === 'cancelled') {
+          toast({ title: '❌ Ride Cancelled', description: 'This ride has been cancelled.' });
+        }
+      }
+    }, 8000);
+
+    return () => clearInterval(interval);
+  }, [currentRide?.id, clearRideState]);
+
+  // Realtime: detect when current ride is cancelled/completed by rider
   useEffect(() => {
     const rideId = currentRide?.id;
     if (!rideId) return;
@@ -138,17 +193,19 @@ const DriverDashboard = () => {
         event: 'UPDATE', schema: 'public', table: 'rides', filter: `id=eq.${rideId}`,
       }, (payload) => {
         const updated = payload.new as any;
-        if (updated.status === 'cancelled') {
-          setCurrentRide(null);
-          setEtaMinutes(null);
-          setEtaDistanceKm(null);
-          setNavMode(false); setNavSteps([]);
-          toast({ title: '❌ Ride Cancelled', description: 'The rider cancelled this ride.' });
+        if (updated.status === 'cancelled' || updated.status === 'completed') {
+          clearRideState(`Realtime: ride updated to ${updated.status}`);
+          if (updated.status === 'cancelled') {
+            toast({ title: '❌ Ride Cancelled', description: 'The rider cancelled this ride.' });
+          }
+        } else {
+          // Sync status from DB (e.g., rider sees a different state)
+          setCurrentRide(prev => prev ? { ...prev, status: updated.status } : null);
         }
       })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [currentRide?.id]);
+  }, [currentRide?.id, clearRideState]);
 
   // Today's earnings
   useEffect(() => {
