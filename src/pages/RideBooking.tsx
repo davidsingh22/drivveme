@@ -21,6 +21,7 @@ interface Location {
 }
 
 type RideStatus = 'searching' | 'driver_assigned' | 'driver_en_route' | 'arrived' | 'in_progress' | 'completed' | 'cancelled';
+type PostCancelAction = 'none' | 'show_options';
 
 interface ActiveRide {
   id: string;
@@ -69,6 +70,8 @@ const RideBooking = () => {
   const [requesting, setRequesting] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [step, setStep] = useState<'input' | 'estimate'>('input');
+  const [postCancelState, setPostCancelState] = useState<PostCancelAction>('none');
+  const [cancelledRideInfo, setCancelledRideInfo] = useState<{ pickup: Location; dropoff: Location } | null>(null);
 
   // Active ride tracking
   const [activeRide, setActiveRide] = useState<ActiveRide | null>(null);
@@ -147,7 +150,7 @@ const RideBooking = () => {
           }
 
           // Clear ride on completion/cancellation
-          if (updated.status === 'completed' || updated.status === 'cancelled') {
+          if (updated.status === 'completed') {
             setTimeout(() => {
               setActiveRide(null);
               setDriverDetails(null);
@@ -155,6 +158,13 @@ const RideBooking = () => {
               setStep('input');
               setFare(null);
             }, 5000);
+          }
+          if (updated.status === 'cancelled') {
+            // Driver cancelled — show options immediately
+            setActiveRide(null);
+            setDriverDetails(null);
+            setConfirmed(false);
+            setPostCancelState('show_options');
           }
         }
       )
@@ -247,16 +257,19 @@ const RideBooking = () => {
     const rideId = activeRide.id;
     const driverId = activeRide.driver_id;
 
-    // Immediately clear UI
+    // Save ride info for "modify" option
+    if (pickup && dropoff) {
+      setCancelledRideInfo({ pickup, dropoff });
+    }
+
+    // Immediately clear ride & show post-cancel options
     setActiveRide(null);
     setConfirmed(false);
-    setStep('input');
-    setFare(null);
     setDriverDetails(null);
+    setPostCancelState('show_options');
     toast({ title: language === 'fr' ? 'Course annulée' : 'Ride cancelled' });
 
     try {
-      // If a driver was assigned, insert cancellation notification for them BEFORE status update (RLS)
       if (driverId) {
         await supabase.from('notifications').insert({
           user_id: driverId,
@@ -267,7 +280,6 @@ const RideBooking = () => {
         });
       }
 
-      // Update ride status
       await supabase.from('rides').update({
         status: 'cancelled',
         cancelled_at: new Date().toISOString(),
@@ -275,7 +287,6 @@ const RideBooking = () => {
         cancellation_reason: 'Rider cancelled',
       }).eq('id', rideId);
 
-      // Fire instant push to driver (non-blocking)
       if (driverId) {
         supabase.functions.invoke('ride-status-push', {
           body: { ride_id: rideId, new_status: 'cancelled', old_status: activeRide.status, rider_id: user.id, driver_id: driverId },
@@ -284,6 +295,30 @@ const RideBooking = () => {
     } catch {
       toast({ title: language === 'fr' ? 'Erreur' : 'Error cancelling ride', variant: 'destructive' });
     }
+  };
+
+  const handleModifyRide = () => {
+    // Keep pickup/dropoff, go back to estimate step so they can re-request
+    setPostCancelState('none');
+    if (cancelledRideInfo && pickup && dropoff) {
+      setStep('estimate');
+      // Re-fetch route to refresh fare
+      fetchRouteFromCoords(pickup.lat, pickup.lng, dropoff.lat, dropoff.lng);
+    } else {
+      setStep('input');
+    }
+    setCancelledRideInfo(null);
+  };
+
+  const handleBackToHome = () => {
+    setPostCancelState('none');
+    setCancelledRideInfo(null);
+    setStep('input');
+    setFare(null);
+    setPickup(null);
+    setDropoff(null);
+    setRouteGeoJson(null);
+    navigate('/rider-home');
   };
 
   if (tokenLoading) {
@@ -415,10 +450,42 @@ const RideBooking = () => {
           )}
         </div>
 
+        {/* Post-cancel options panel */}
+        {postCancelState === 'show_options' && !activeRide && (
+          <motion.div
+            initial={{ x: 100, opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            className="w-full lg:w-[400px] border-l border-border bg-background p-6 space-y-5 overflow-y-auto max-h-[60vh] lg:max-h-none flex flex-col items-center justify-center"
+          >
+            <div className="text-center space-y-2">
+              <p className="text-4xl">❌</p>
+              <h2 className="text-xl font-bold text-foreground">
+                {language === 'fr' ? 'Course annulée' : 'Ride Cancelled'}
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                {language === 'fr' ? 'Que souhaitez-vous faire ?' : 'What would you like to do?'}
+              </p>
+            </div>
+            <Button
+              className="w-full h-14 text-lg font-bold gradient-primary"
+              onClick={handleModifyRide}
+            >
+              {language === 'fr' ? '✏️ Modifier la course' : '✏️ Modify Ride'}
+            </Button>
+            <Button
+              variant="outline"
+              className="w-full h-14 text-lg font-bold border-border"
+              onClick={handleBackToHome}
+            >
+              {language === 'fr' ? '🏠 Retour à l\'accueil' : '🏠 Back to Home'}
+            </Button>
+          </motion.div>
+        )}
+
         {/* Active ride tracking panel */}
         {activeRide ? renderActiveRidePanel() : (
           /* Fare estimate panel */
-          fare && step === 'estimate' && (
+          postCancelState !== 'show_options' && fare && step === 'estimate' && (
             <motion.div
               initial={{ x: 100, opacity: 0 }}
               animate={{ x: 0, opacity: 1 }}
