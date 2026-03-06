@@ -93,6 +93,10 @@ export function RideOfferModal({ open, ride, onDecline, onAccept, countdownSecon
 
   const fare = ride.estimated_fare;
   const driverEarnings = calculateDriverEarnings(fare);
+  // Uber typically takes ~40% — show what Uber would pay driver for same fare
+  const uberEstFare = Math.round(fare * 1.075 * 100) / 100;
+  const uberDriverCut = Math.round(uberEstFare * 0.6 * 100) / 100;
+  const uberPlatformTake = Math.round((uberEstFare - uberDriverCut) * 100) / 100;
 
   return (
     <AnimatePresence>
@@ -110,6 +114,7 @@ export function RideOfferModal({ open, ride, onDecline, onAccept, countdownSecon
             className="relative w-full max-w-xl my-auto" style={{ pointerEvents: 'auto' }}
           >
             <Card className="relative bg-black/60 backdrop-blur-xl border border-white/10 rounded-3xl overflow-hidden shadow-2xl">
+              {/* Header */}
               <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
                 <div className="flex items-center gap-3">
                   <div className="h-10 w-10 rounded-xl bg-primary/30 border border-primary/30 flex items-center justify-center">
@@ -123,6 +128,19 @@ export function RideOfferModal({ open, ride, onDecline, onAccept, countdownSecon
               </div>
 
               <div className="px-6 py-5 space-y-5">
+                {/* Keep more of your fare banner */}
+                <div className="rounded-2xl border-2 border-primary/50 bg-primary/10 p-4">
+                  <p className="text-lg font-bold text-white flex items-center gap-2">
+                    <span className="text-xl">💰</span> Keep more of your fare
+                  </p>
+                  <p className="text-sm text-white/70 mt-1">
+                    On many trips, other ride apps <strong>can take up to ~40%</strong> in fees.{' '}
+                    <strong className="text-primary">Drivveme</strong> is built so drivers keep more.
+                  </p>
+                  <p className="text-[10px] text-white/40 mt-2">* Fee comparisons are estimates based on publicly reported driver experiences.</p>
+                </div>
+
+                {/* Distance to rider */}
                 <div className="flex items-center justify-center">
                   <div className="inline-flex items-center gap-2 px-5 py-3 rounded-full bg-primary/20 border-2 border-primary/50">
                     <Navigation className="h-5 w-5 text-primary" />
@@ -136,7 +154,8 @@ export function RideOfferModal({ open, ride, onDecline, onAccept, countdownSecon
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-3">
+                {/* Pickup info */}
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
                   <div className="flex items-start gap-3">
                     <div className="mt-1 h-3 w-3 rounded-full bg-green-500 flex-shrink-0" />
                     <div>
@@ -146,19 +165,38 @@ export function RideOfferModal({ open, ride, onDecline, onAccept, countdownSecon
                   </div>
                 </div>
 
-                <div className="text-center">
-                  <div className="text-3xl font-extrabold text-green-400">${driverEarnings.toFixed(2)}</div>
-                  <div className="text-green-400 text-sm font-medium">You earn</div>
+                {/* Earnings Comparison */}
+                <div className="grid grid-cols-2 gap-3">
+                  {/* Drivveme earnings */}
+                  <div className="rounded-xl border-2 border-green-500/50 bg-green-500/10 p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Car className="h-4 w-4 text-primary" />
+                      <span className="text-sm font-semibold text-primary">Drivveme</span>
+                    </div>
+                    <p className="text-3xl font-extrabold text-green-400">${driverEarnings.toFixed(2)}</p>
+                    <p className="text-green-400 text-sm font-medium">You earn</p>
+                  </div>
+
+                  {/* Uber comparison */}
+                  <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-sm font-semibold text-white/60">Uber</span>
+                    </div>
+                    <p className="text-xl font-bold text-white/80">Only ${uberDriverCut.toFixed(2)} <span className="text-xs font-normal text-white/50">est</span></p>
+                    <p className="text-xs text-destructive font-medium">Uber typically takes ~${uberPlatformTake.toFixed(2)} est</p>
+                  </div>
                 </div>
 
+                {/* Accept button */}
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); handleAccept(); }}
-                  className="w-full h-14 text-lg font-bold bg-green-600 hover:bg-green-700 active:scale-95 text-white rounded-xl touch-manipulation select-none cursor-pointer"
+                  className="w-full h-14 text-lg font-bold bg-green-600 hover:bg-green-700 active:scale-95 text-white rounded-xl touch-manipulation select-none cursor-pointer transition-all"
                 >
                   {language === 'fr' ? 'Accepter la course' : 'Accept Ride'}
                 </button>
 
+                {/* Priority driver badge */}
                 <div className="flex items-center gap-3 bg-accent/10 border border-accent/30 rounded-xl p-3">
                   <Trophy className="h-5 w-5 text-accent flex-shrink-0" />
                   <div className="flex-1">
@@ -167,10 +205,11 @@ export function RideOfferModal({ open, ride, onDecline, onAccept, countdownSecon
                   </div>
                 </div>
 
+                {/* Decline button */}
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); handleDecline(); }}
-                  className="w-full h-14 text-lg font-bold bg-destructive hover:bg-destructive/90 active:scale-95 text-white rounded-xl flex items-center justify-center gap-2 touch-manipulation select-none cursor-pointer"
+                  className="w-full h-14 text-lg font-bold bg-destructive hover:bg-destructive/90 active:scale-95 text-white rounded-xl flex items-center justify-center gap-2 touch-manipulation select-none cursor-pointer transition-all"
                 >
                   <X className="h-5 w-5" />
                   No thanks — Skip
