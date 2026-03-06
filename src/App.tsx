@@ -131,6 +131,9 @@ const AppRoutes = () => (
             </RouteErrorBoundary>
           }
         />
+        <Route path="/driver-messages" element={<DriverMessages />} />
+        <Route path="/ride-history" element={<RideHistory />} />
+        <Route path="/earnings" element={<Earnings />} />
         <Route path="/admin" element={<AdminPanel />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
