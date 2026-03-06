@@ -149,22 +149,20 @@ const RideBooking = () => {
             fetchDriverDetails(updated.driver_id);
           }
 
-          // Navigate to review page on completion
+          // Navigate to review page on completion — immediately, using payload data
           if (updated.status === 'completed') {
-            const rideData = activeRide;
-            setTimeout(() => {
-              navigate('/ride-review', {
-                replace: true,
-                state: {
-                  rideId: rideData?.id || updated.id,
-                  driverId: updated.driver_id || rideData?.driver_id,
-                  driverName: driverDetails?.first_name || 'your driver',
-                  fare: updated.actual_fare || updated.estimated_fare || rideData?.estimated_fare || 0,
-                  pickupAddress: rideData?.pickup_address || '',
-                  dropoffAddress: rideData?.dropoff_address || '',
-                },
-              });
-            }, 1500);
+            navigate('/ride-review', {
+              replace: true,
+              state: {
+                rideId: updated.id,
+                driverId: updated.driver_id,
+                driverName: null, // will be fetched on review page
+                fare: updated.actual_fare || updated.estimated_fare || 0,
+                pickupAddress: updated.pickup_address || '',
+                dropoffAddress: updated.dropoff_address || '',
+              },
+            });
+            return; // stop processing
           }
           if (updated.status === 'cancelled') {
             // Driver cancelled — show options immediately
