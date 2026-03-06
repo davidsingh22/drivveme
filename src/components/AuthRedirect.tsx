@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { getRouteForRoles, AUTH_PAGES } from '@/lib/routeByRole';
@@ -14,6 +14,8 @@ const AuthRedirect = ({ children }: { children: React.ReactNode }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { toast } = useToast();
+  const rolesRef = useRef(roles);
+  rolesRef.current = roles;
 
   const isChecking = authLoading || profileLoading;
 
@@ -30,14 +32,14 @@ const AuthRedirect = ({ children }: { children: React.ReactNode }) => {
       } else {
         // Give roles a moment to load, then show error
         const timeout = setTimeout(() => {
-          if (roles.length === 0) {
+          if (rolesRef.current.length === 0) {
             toast({
               title: 'No role assigned',
               description: 'Please contact support.',
               variant: 'destructive',
             });
           }
-        }, 3000);
+        }, 5000);
         return () => clearTimeout(timeout);
       }
     }
