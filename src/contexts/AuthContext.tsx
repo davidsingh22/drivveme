@@ -401,6 +401,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setSession(existingSession);
       setUser(existingSession?.user ?? null);
 
+      // Immediately sync Median OneSignal bridge on cold start
+      if (existingSession?.user) {
+        try {
+          const median = (window as any).median;
+          if (median?.onesignal) {
+            console.log('[Auth] Cold-start: calling median.onesignal.register()');
+            try { median.onesignal.register(); } catch (e) { console.error('[Auth] register() err:', e); }
+            console.log('[Auth] Cold-start: calling median.onesignal.login({ externalId:', existingSession.user.id, '})');
+            try { median.onesignal.login({ externalId: existingSession.user.id }); } catch (e) { console.error('[Auth] login() err:', e); }
+          }
+        } catch (e) { console.error('[Auth] Median cold-start sync error:', e); }
+      }
+
       try {
         if (existingSession?.user) {
           const hydrated = hydrateFromCache(existingSession.user.id);

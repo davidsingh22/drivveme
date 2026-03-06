@@ -129,10 +129,26 @@ const DriverProfileModal = ({ open, onOpenChange }: DriverProfileModalProps) => 
           </div>
         </div>
         <ProfileDebugInfo userId={user?.id} />
-        <Button variant="outline" className="w-full" onClick={() => {
-          if (user?.id) { resyncMedianOneSignal(user.id); toast({ title: 'Re-syncing notifications…' }); }
-        }}>
-          <Bell className="h-4 w-4 mr-2" />Re-sync Notifications
+        <Button
+          size="lg"
+          className="w-full h-14 text-lg font-bold bg-primary text-primary-foreground hover:bg-primary/90"
+          onClick={() => {
+            if (!user?.id) return;
+            try {
+              const median = (window as any).median;
+              if (median?.onesignal) {
+                console.log('[SyncButton] Calling register()');
+                try { median.onesignal.register(); } catch {}
+                console.log('[SyncButton] Calling login({ externalId:', user.id, '})');
+                median.onesignal.login({ externalId: user.id });
+              }
+            } catch (e) { console.error('[SyncButton] Median error:', e); }
+            resyncMedianOneSignal(user.id);
+            toast({ title: '🔔 Syncing push notifications…', description: `Device linked to ${user.id}` });
+          }}
+        >
+          <Bell className="h-5 w-5 mr-2" />
+          SYNC PUSH NOTIFICATIONS
         </Button>
         <div className="flex gap-3">
           <Button variant="outline" className="flex-1" onClick={() => onOpenChange(false)} disabled={isSaving}>Cancel</Button>
