@@ -465,8 +465,8 @@ const RideBooking = () => {
           </div>
         </div>
 
-        {/* Cancel button */}
-        {!isTerminal && activeRide.status !== 'in_progress' && (
+        {/* Cancel button — always visible for non-terminal rides */}
+        {!isTerminal && (
           <Button variant="destructive" className="w-full h-12" onClick={handleCancelRide}>
             {language === 'fr' ? 'Annuler la course' : 'Cancel Ride'}
           </Button>
